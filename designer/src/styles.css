@@ -1,0 +1,906 @@
+/* ==========================================================================
+   Process Engine design system — Tailwind v4, CSS-first configuration.
+
+   Layout, spacing and one-off composition live in the markup as utilities.
+   This file owns three things only:
+
+     1. Tokens      — one semantic palette, defined twice (light / dark).
+     2. Base        — element defaults, focus rings, scrollbars, motion.
+     3. Components  — the primitives repeated across screens (button, input,
+                      card, badge, table, nav item). Anything used in three
+                      or more places earns a class; everything else is a
+                      utility at the call site.
+
+   Colour is never referenced literally in markup — components and utilities
+   both resolve to the semantic tokens below, so light and dark stay in sync
+   and a rebrand is a single edit here.
+   ========================================================================== */
+
+@import 'tailwindcss';
+
+/* Dark mode is class-driven (.dark on <html>) rather than media-driven, so a
+   user can override their OS preference. index.html applies it pre-paint. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   1. Tokens
+   ========================================================================== */
+
+/* Every colour is authored in OKLCH, because the ramps below are only
+   trustworthy in a perceptually uniform space: two tokens one lightness step
+   apart look one step apart, whatever their hue. The hex in each comment is
+   the rendered sRGB value, for eyeballing only — the OKLCH is the source.
+
+   Chroma is fitted to sRGB on purpose. Browsers gamut-map out-of-range oklch()
+   themselves, but not identically, so an unfitted token would drift between
+   Chrome and Safari. Every value here already fits; raise a chroma and it may
+   not, so re-check rather than nudging by eye.
+
+   Three families, deliberately kept apart:
+     neutral   hue 257  — every surface, stroke and text tone
+     brand     hue 254  — primary action and selection, nothing else
+     status               success / warning / danger / running / inert
+     category  6 hues   — plugin categories, at a third of status' chroma so a
+                          step's category tile can never be mistaken for its
+                          run state on the canvas
+
+   Contrast is a constraint, not an outcome: every foreground/background pair
+   the app can actually produce clears WCAG AA (4.5:1 for text, 3:1 for control
+   borders and the focus ring). The tight ones are noted inline. */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces, from furthest back to closest to the user */
+  --canvas: oklch(95.2% 0.006 257); /* #edeff3 */
+  --surface: oklch(100% 0 0); /* #ffffff */
+  --surface-2: oklch(96.9% 0.005 257); /* #f3f5f8 */
+  --surface-3: oklch(93.6% 0.008 257); /* #e6eaef */
+  --raised: oklch(100% 0 0); /* #ffffff */
+  --overlay: oklch(20% 0.035 262 / 0.45);
+
+  /* strokes — `line` divides, `line-strong` bounds a control and therefore
+     has to clear 3:1 against the surface behind it (WCAG 1.4.11). */
+  --line: oklch(88.5% 0.008 257); /* #d6d9de */
+  --line-strong: oklch(66.5% 0.018 257); /* #8d949f — 3.05:1 on white */
+
+  /* text, in descending emphasis. fg-subtle is the floor: at 5.06:1 on white
+     it still clears AA, which the old #838d9b (3.3:1) did not. */
+  --fg: oklch(22% 0.022 260); /* #151b25 */
+  --fg-muted: oklch(45% 0.022 258); /* #4e5662 */
+  --fg-subtle: oklch(53% 0.02 258); /* #656c78 */
+
+  /* brand — cobalt, used for primary action and selection only */
+  --brand: oklch(52% 0.155 254); /* #1468bf — 5.56:1 under white */
+  --brand-hover: oklch(45.5% 0.145 254); /* #0056a4 */
+  --brand-text: oklch(45% 0.144 254); /* #0054a2 */
+  --brand-soft: oklch(96.2% 0.018 254); /* #eaf3ff */
+  --on-brand: oklch(100% 0 0);
+  --ring: oklch(55% 0.16 254); /* #1b71cc — 4.90:1 on white */
+
+  /* The brand gradient — the same cobalt→teal sweep as the logo. It is the
+     app's one expressive element and appears only where the product speaks
+     with its own voice: the primary action, the active-nav bar, the avatar,
+     empty-state tiles and the login backdrop. Body content never wears it.
+     White stays ≥5.3:1 over every point of the sweep, so a gradient button
+     is as readable as a flat one. */
+  --grad-from: oklch(52% 0.155 254); /* #1468bf */
+  --grad-to: oklch(50% 0.088 215); /* #016f82 */
+  --grad-from-hover: oklch(48% 0.153 254); /* #005cb1 */
+  --grad-to-hover: oklch(48% 0.085 215); /* #00697b */
+  /* the coloured shadow under a hovered primary action */
+  --glow-brand: 0 4px 14px oklch(52% 0.155 254 / 0.35);
+
+  /* status — each pairs a legible foreground with a tinted background, and the
+     pair itself clears 4.5:1 so a badge is readable, not just the page. */
+  --ok-fg: oklch(52% 0.13 152); /* #137d41 */
+  --ok-bg: oklch(95.5% 0.03 152); /* #e2f6e6 */
+  --warn-fg: oklch(53% 0.115 70); /* #955e00 */
+  --warn-bg: oklch(96% 0.036 80); /* #fff0d7 */
+  --bad-fg: oklch(52% 0.185 25); /* #bc272c */
+  --bad-bg: oklch(95.5% 0.022 25); /* #ffebe9 */
+  /* running/info is pulled to cyan, well clear of the cobalt brand — the two
+     are adjacent on a canvas and must not be confusable. */
+  --info-fg: oklch(51.5% 0.097 225); /* #027291 */
+  --info-bg: oklch(96.2% 0.024 225); /* #e2f6ff */
+  --alt-fg: oklch(50% 0.09 292); /* #645992 */
+  --alt-bg: oklch(95.5% 0.02 292); /* #f0eefd */
+
+  /* category tints — one hue per plugin family, at low chroma on purpose */
+  --cat-blue-fg: oklch(46% 0.075 250); /* #365b80 */
+  --cat-blue-bg: oklch(95.8% 0.016 250); /* #e9f2fc */
+  --cat-violet-fg: oklch(46% 0.075 292); /* #59507e */
+  --cat-violet-bg: oklch(95.8% 0.016 292); /* #f1effb */
+  --cat-teal-fg: oklch(46% 0.075 190); /* #106561 */
+  --cat-teal-bg: oklch(95.8% 0.016 190); /* #e6f5f3 */
+  --cat-amber-fg: oklch(46% 0.075 72); /* #725124 */
+  --cat-amber-bg: oklch(95.8% 0.016 72); /* #f8f0e6 */
+  --cat-green-fg: oklch(46% 0.075 150); /* #376441 */
+  --cat-green-bg: oklch(95.8% 0.016 150); /* #eaf4ec */
+  --cat-rose-fg: oklch(46% 0.075 345); /* #764662 */
+  --cat-rose-bg: oklch(95.8% 0.016 345); /* #faedf4 */
+
+  /* syntax tints for the JSON tree, held at one lightness so no value type
+     shouts louder than another */
+  --tok-string: oklch(50% 0.13 152); /* #05773b */
+  --tok-number: oklch(50% 0.14 254); /* #1c63b0 */
+  --tok-boolean: oklch(50% 0.13 300); /* #6f4fa1 */
+
+  /* Shadow ink is a cool near-navy, not black: a neutral-black shadow over a
+     blue-grey surface greys it out, which is what makes a light UI look dusty. */
+  --shadow-xs: 0 1px 2px rgb(13 22 38 / 0.05);
+  --shadow-sm: 0 1px 3px rgb(13 22 38 / 0.08), 0 1px 2px rgb(13 22 38 / 0.04);
+  --shadow-md: 0 4px 12px rgb(13 22 38 / 0.09), 0 2px 4px rgb(13 22 38 / 0.04);
+  --shadow-lg: 0 12px 32px rgb(13 22 38 / 0.13), 0 4px 8px rgb(13 22 38 / 0.06);
+  --shadow-xl: 0 24px 56px rgb(13 22 38 / 0.18), 0 8px 16px rgb(13 22 38 / 0.08);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Dark surfaces lighten as they rise, so elevation reads without shadows —
+     shadows are nearly invisible on dark backgrounds. The steps are even in
+     OKLCH (16 → 20.5 → 24.5 → 29.5), which is what keeps the stack legible
+     rather than three near-identical greys. */
+  --canvas: oklch(16% 0.014 257); /* #090e13 */
+  --surface: oklch(20.5% 0.016 257); /* #13171f */
+  --surface-2: oklch(24.5% 0.018 257); /* #1b2129 */
+  --surface-3: oklch(29.5% 0.02 257); /* #262d37 */
+  --raised: oklch(24% 0.017 257); /* #1a2027 */
+  --overlay: oklch(10% 0.02 262 / 0.65);
+
+  --line: oklch(32% 0.018 257); /* #2d333c */
+  --line-strong: oklch(50.8% 0.022 257); /* #5e6672 — 3.09:1 on surface */
+
+  --fg: oklch(94% 0.008 257); /* #e8ebf1 */
+  --fg-muted: oklch(72% 0.016 257); /* #9ea5af */
+  --fg-subtle: oklch(63% 0.018 257); /* #828a94 — 5.12:1 on surface */
+
+  /* Brand holds its lightness across themes rather than getting lighter, so
+     white still clears AA on a primary button; hover moves up only slightly
+     for the same reason. */
+  --brand: oklch(52% 0.15 254); /* #1a69bc — 5.55:1 under white */
+  --brand-hover: oklch(55.5% 0.15 254); /* #2773c8 — 4.78:1 under white */
+  --brand-text: oklch(76% 0.11 254); /* #7fb5f6 */
+  --brand-soft: color-mix(in oklab, oklch(52% 0.15 254) 22%, transparent);
+  --on-brand: oklch(100% 0 0);
+  --ring: oklch(68% 0.14 254); /* #569bec */
+
+  /* Same sweep as light — its lightness was chosen for white text, which does
+     not change with the theme. Only the glow deepens: coloured light reads
+     stronger against a dark surface. */
+  --grad-from: oklch(52% 0.15 254);
+  --grad-to: oklch(50% 0.088 215);
+  --grad-from-hover: oklch(55.5% 0.15 254);
+  --grad-to-hover: oklch(53% 0.09 215);
+  --glow-brand: 0 4px 18px oklch(58% 0.145 254 / 0.45);
+
+  --ok-fg: oklch(78% 0.15 155); /* #59d38c */
+  --ok-bg: color-mix(in oklab, oklch(78% 0.15 155) 15%, transparent);
+  --warn-fg: oklch(82% 0.14 82); /* #f1ba4b */
+  --warn-bg: color-mix(in oklab, oklch(82% 0.14 82) 15%, transparent);
+  --bad-fg: oklch(72% 0.16 25); /* #f97770 */
+  --bad-bg: color-mix(in oklab, oklch(72% 0.16 25) 15%, transparent);
+  --info-fg: oklch(78% 0.11 225); /* #5ec6ec */
+  --info-bg: color-mix(in oklab, oklch(78% 0.11 225) 15%, transparent);
+  --alt-fg: oklch(78% 0.08 292); /* #b8afe7 */
+  --alt-bg: color-mix(in oklab, oklch(78% 0.08 292) 15%, transparent);
+
+  --cat-blue-fg: oklch(76% 0.06 250); /* #95b5d6 */
+  --cat-blue-bg: oklch(30% 0.032 250); /* #212f3d */
+  --cat-violet-fg: oklch(76% 0.06 292); /* #b1abd5 */
+  --cat-violet-bg: oklch(30% 0.032 292); /* #2e2b3d */
+  --cat-teal-fg: oklch(76% 0.06 190); /* #84beb9 */
+  --cat-teal-bg: oklch(30% 0.032 190); /* #193331 */
+  --cat-amber-fg: oklch(76% 0.06 72); /* #c9ab87 */
+  --cat-amber-bg: oklch(30% 0.032 72); /* #382b1c */
+  --cat-green-fg: oklch(76% 0.06 150); /* #97bc9d */
+  --cat-green-bg: oklch(30% 0.032 150); /* #223225 */
+  --cat-rose-fg: oklch(76% 0.06 345); /* #cea2ba */
+  --cat-rose-bg: oklch(30% 0.032 345); /* #3a2731 */
+
+  --tok-string: oklch(80% 0.14 155); /* #6ad895 */
+  --tok-number: oklch(79% 0.1 250); /* #88c0f9 */
+  --tok-boolean: oklch(79% 0.1 300); /* #c4acf2 */
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.55);
+  --shadow-xl: 0 24px 56px rgb(0 0 0 / 0.65);
+}
+
+/* `inline` keeps the utilities pointing at the vars above rather than copying
+   their values, which is what lets .dark re-theme the whole app by cascade. */
+@theme inline {
+  /* No webfont: this is self-hosted software that must render identically
+     offline, so the stack stays local to the machine. */
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, -apple-system, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'SF Mono', Menlo, monospace;
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-raised: var(--raised);
+  --color-overlay: var(--overlay);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-text: var(--brand-text);
+  --color-brand-soft: var(--brand-soft);
+  --color-on-brand: var(--on-brand);
+  --color-ring: var(--ring);
+
+  --color-ok-fg: var(--ok-fg);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn-fg: var(--warn-fg);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad-fg: var(--bad-fg);
+  --color-bad-bg: var(--bad-bg);
+  --color-info-fg: var(--info-fg);
+  --color-info-bg: var(--info-bg);
+  --color-alt-fg: var(--alt-fg);
+  --color-alt-bg: var(--alt-bg);
+
+  --color-cat-blue-fg: var(--cat-blue-fg);
+  --color-cat-blue-bg: var(--cat-blue-bg);
+  --color-cat-violet-fg: var(--cat-violet-fg);
+  --color-cat-violet-bg: var(--cat-violet-bg);
+  --color-cat-teal-fg: var(--cat-teal-fg);
+  --color-cat-teal-bg: var(--cat-teal-bg);
+  --color-cat-amber-fg: var(--cat-amber-fg);
+  --color-cat-amber-bg: var(--cat-amber-bg);
+  --color-cat-green-fg: var(--cat-green-fg);
+  --color-cat-green-bg: var(--cat-green-bg);
+  --color-cat-rose-fg: var(--cat-rose-fg);
+  --color-cat-rose-bg: var(--cat-rose-bg);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+
+  /* app chrome measurements, shared by the shell and the editor */
+  --spacing-sidebar: 236px;
+  --spacing-sidebar-rail: 60px;
+  --spacing-topbar: 52px;
+}
+
+/* ==========================================================================
+   2. Base
+   ========================================================================== */
+
+@layer base {
+  /* Tailwind v4 defaults `border-color` to currentColor; pin it to the token
+     so a bare `border` utility is always the themed hairline. */
+  *,
+  ::after,
+  ::before {
+    border-color: var(--line);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--canvas);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.011em;
+    line-height: 1.25;
+    font-weight: 600;
+  }
+
+  /* Numbers in tables, metrics and durations line up column-wise. */
+  th,
+  td,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One focus treatment everywhere, and only for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--brand) 26%, transparent);
+  }
+
+  ::placeholder {
+    color: var(--fg-subtle);
+  }
+
+  /* Thin, themed scrollbars — the OS default light scrollbar on a dark panel
+     is the most common dark-mode tell. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fg-subtle);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* ==========================================================================
+   3. Components
+   ========================================================================== */
+
+@layer components {
+  /* ---- buttons ---------------------------------------------------------- */
+
+  /* The border is what identifies a secondary button on a white card — its
+     label alone doesn't — so it is `line-strong` (3:1) rather than the hairline
+     used for dividers. Hover moves the fill, not the stroke; press compresses
+     the whole control a hair — the tactile half of the interaction, and
+     `transition-transform` makes the release spring back rather than snap.
+     (prefers-reduced-motion zeroes every transition globally in @layer base.) */
+  .btn {
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md
+           border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg
+           shadow-xs transition-[color,background-color,border-color,box-shadow,transform] duration-100
+           hover:bg-surface-2
+           active:scale-[0.98] active:bg-surface-3
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  /* The primary action wears the brand gradient — the one place on a working
+     screen the product speaks with its own voice. Hover darkens the sweep and
+     lends it a coloured shadow; both gradients keep white ≥5.3:1 end to end. */
+  .btn-primary {
+    @apply border-transparent text-on-brand shadow-sm hover:border-transparent;
+    background-image: linear-gradient(135deg, var(--grad-from), var(--grad-to));
+  }
+
+  .btn-primary:hover {
+    background-image: linear-gradient(135deg, var(--grad-from-hover), var(--grad-to-hover));
+    box-shadow: var(--glow-brand);
+  }
+
+  .btn-primary:active {
+    box-shadow: var(--shadow-xs);
+  }
+
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-fg-muted shadow-none
+           hover:bg-surface-2 hover:border-transparent hover:text-fg;
+  }
+
+  .btn-danger {
+    @apply text-bad-fg hover:bg-bad-bg hover:border-bad-fg/40;
+  }
+
+  .btn-danger-solid {
+    @apply border-transparent bg-bad-fg text-white shadow-sm
+           hover:brightness-110 hover:border-transparent;
+  }
+
+  .btn-sm {
+    @apply gap-1 px-2 py-1 text-xs;
+  }
+
+  .btn-lg {
+    @apply gap-2 rounded-lg px-5 py-2.5 text-[15px];
+  }
+
+  /* Square by construction, so every icon-only control is the same hit area. */
+  .btn-icon {
+    @apply size-8 shrink-0 p-0;
+  }
+
+  .btn-icon.btn-sm {
+    @apply size-7;
+  }
+
+  /* ---- form controls ---------------------------------------------------- */
+
+  /* One shared control base — @apply resolves utilities only, so the variants
+     below extend this rule rather than composing `.input`. */
+  /* A field's boundary is its only affordance, so it carries the 3:1 stroke
+     (WCAG 1.4.11) at rest — not just on hover, which a pointer-less user never
+     reaches. */
+  .input,
+  .select,
+  .textarea {
+    @apply w-full rounded-md border border-line-strong bg-surface px-2.5 py-1.5 text-[13px] text-fg
+           shadow-xs transition-shadow
+           hover:border-fg-subtle
+           focus:border-brand focus:outline-none focus:ring-2 focus:ring-ring/25
+           disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-2 disabled:text-fg-subtle;
+  }
+
+  .input-invalid {
+    @apply border-bad-fg focus:border-bad-fg focus:ring-bad-fg/25;
+  }
+
+  /* Native select arrows differ per platform and ignore the theme, so the
+     control is flattened and given a themed chevron instead. */
+  .select {
+    @apply cursor-pointer appearance-none bg-no-repeat pr-8;
+    /* A data URI cannot read a custom property, so these two strokes are the
+       one place a token value is duplicated: they are --fg-subtle, light then
+       dark. Re-derive them if that token moves. */
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23656c78' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>");
+    background-position: right 0.5rem center;
+    background-size: 16px;
+  }
+
+  .dark .select {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23828a94' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6l4 4 4-4'/></svg>");
+  }
+
+  .textarea {
+    @apply resize-y font-mono text-xs leading-relaxed;
+  }
+
+  .checkbox {
+    @apply size-4 shrink-0 cursor-pointer rounded-sm border-line-strong bg-surface;
+    accent-color: var(--brand);
+  }
+
+  .label {
+    @apply flex items-center gap-1.5 text-xs font-semibold text-fg;
+  }
+
+  .hint {
+    @apply text-[11px] leading-relaxed text-fg-muted;
+  }
+
+  .muted {
+    @apply text-xs text-fg-muted;
+  }
+
+  .error-text {
+    @apply text-xs text-bad-fg;
+  }
+
+  /* ---- containers ------------------------------------------------------- */
+
+  .card {
+    @apply rounded-xl border border-line bg-surface shadow-sm;
+  }
+
+  /* A card that navigates somewhere physically rises to meet the pointer —
+     the lift, not the cursor alone, is what says "this is a door, not a
+     label". Keep it off cards that merely display. */
+  .card-interactive {
+    @apply cursor-pointer transition-[border-color,box-shadow,transform] duration-150
+           hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md;
+  }
+
+  .panel {
+    @apply border-b border-line px-4 py-4 last:border-b-0;
+  }
+
+  .panel-title {
+    @apply mb-2.5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.06em] text-fg-subtle;
+  }
+
+  .section-label {
+    @apply mb-2 text-[11px] font-bold uppercase tracking-[0.06em] text-fg-subtle;
+  }
+
+  /* ---- badges ----------------------------------------------------------- */
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-surface-3 px-2 py-0.5
+           text-[11px] font-semibold text-fg-muted;
+  }
+
+  /* Status is carried by an icon or dot as well as colour, so it survives
+     greyscale printing and colour-blind vision (WCAG 1.4.1). */
+  .badge-dot::before {
+    content: '';
+    @apply size-1.5 shrink-0 rounded-full bg-current;
+  }
+
+  .badge-succeeded { @apply bg-ok-bg text-ok-fg; }
+  .badge-failed    { @apply bg-bad-bg text-bad-fg; }
+  .badge-running   { @apply bg-info-bg text-info-fg; }
+  .badge-paused    { @apply bg-warn-bg text-warn-fg; }
+  .badge-cancelled { @apply bg-alt-bg text-alt-fg; }
+  /* fg-muted, not fg-subtle: a badge label is content, and subtle-on-surface-3
+     is the one neutral pairing that cannot reach 4.5:1. */
+  .badge-skipped   { @apply bg-surface-3 text-fg-muted; }
+  .badge-pending   { @apply bg-surface-3 text-fg-muted; }
+  .badge-brand     { @apply bg-brand-soft text-brand-text; }
+
+  /* ---- tables ----------------------------------------------------------- */
+
+  .table {
+    @apply w-full border-collapse text-[13px];
+  }
+
+  .table thead th {
+    @apply sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-left
+           text-[11px] font-semibold uppercase tracking-[0.05em] text-fg-subtle;
+  }
+
+  .table tbody td {
+    @apply border-b border-line/60 px-3 py-2 align-middle;
+  }
+
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .table tbody tr.is-clickable {
+    @apply cursor-pointer transition-colors hover:bg-surface-2;
+  }
+
+  .table tbody tr.is-selected {
+    @apply bg-brand-soft;
+  }
+
+  /* ---- navigation ------------------------------------------------------- */
+
+  .nav-item {
+    @apply relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-fg-muted
+           transition-colors hover:bg-surface-2 hover:text-fg;
+  }
+
+  .nav-item.is-active {
+    @apply bg-brand-soft font-semibold text-brand-text;
+  }
+
+  /* The current page carries a slim gradient bar — colour identifies it even
+     before the tinted background resolves, and it is the same sweep as the
+     logo above it. */
+  .nav-item.is-active::before {
+    content: '';
+    @apply absolute inset-y-1.5 left-0 w-[3px] rounded-full;
+    background-image: linear-gradient(to bottom, var(--grad-from), var(--grad-to));
+  }
+
+  .menu-item {
+    @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px]
+           text-fg transition-colors hover:bg-surface-2
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .menu-item-danger {
+    @apply text-bad-fg hover:bg-bad-bg;
+  }
+
+  .tab {
+    @apply rounded-[5px] px-3 py-1 text-xs font-medium text-fg-muted transition-colors
+           hover:text-fg;
+  }
+
+  .tab.is-active {
+    @apply bg-surface font-semibold text-fg shadow-xs;
+  }
+
+  .tab-list {
+    @apply inline-flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5;
+  }
+
+  /* ---- misc primitives -------------------------------------------------- */
+
+  /* Small identity surfaces — the avatar, an empty state's icon — wear the
+     brand sweep. `-soft` is the same sweep at a whisper, for icon tiles that
+     sit inside content. */
+  .brand-tile {
+    @apply text-on-brand;
+    background-image: linear-gradient(135deg, var(--grad-from), var(--grad-to));
+  }
+
+  .brand-tile-soft {
+    @apply text-brand-text;
+    background-image: linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--grad-from) 14%, transparent),
+      color-mix(in oklab, var(--grad-to) 14%, transparent)
+    );
+  }
+
+  .link {
+    @apply cursor-pointer rounded-sm text-brand-text underline-offset-2 hover:underline;
+  }
+
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-line
+           bg-surface-2 px-1.5 font-mono text-[10px] font-semibold text-fg-muted;
+  }
+
+  .code {
+    @apply rounded bg-surface-3 px-1 py-px font-mono text-[0.92em] text-fg-muted;
+  }
+
+  .skeleton {
+    @apply rounded-md bg-surface-3;
+    animation: pe-pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .divider-text {
+    @apply flex items-center gap-3 text-[11px] uppercase tracking-[0.08em] text-fg-subtle
+           before:h-px before:flex-1 before:bg-line after:h-px after:flex-1 after:bg-line;
+  }
+
+  /* Long identifiers, expressions and URLs must never widen a panel. */
+  .truncate-mono {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap font-mono;
+  }
+}
+
+/* ==========================================================================
+   4. Animation
+   ========================================================================== */
+
+@keyframes pe-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes pe-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+@keyframes pe-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pe-zoom {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+@keyframes pe-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pe-dash {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+/* The breathing halo on a step that is executing right now. */
+@keyframes pe-halo {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--info-fg) 14%, transparent), var(--shadow-md);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in oklab, var(--info-fg) 26%, transparent), var(--shadow-md);
+  }
+}
+
+@utility animate-rise {
+  animation: pe-rise 0.16s ease-out;
+}
+
+@utility animate-fade {
+  animation: pe-fade 0.14s ease-out;
+}
+
+@utility animate-zoom {
+  animation: pe-zoom 0.13s ease-out;
+}
+
+@utility animate-spin-slow {
+  animation: pe-spin 1s linear infinite;
+}
+
+/* Two soft pools of brand light behind a page — the login backdrop. Painted
+   with the gradient tokens at low alpha so both themes get it for free, and
+   fixed so the light does not scroll with the card floating over it. */
+@utility aurora {
+  background-image:
+    radial-gradient(38rem 26rem at 12% -8%, color-mix(in oklab, var(--grad-from) 13%, transparent), transparent 70%),
+    radial-gradient(34rem 24rem at 105% 110%, color-mix(in oklab, var(--grad-to) 11%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Coloured light needs more presence against a dark room. */
+.dark .aurora {
+  background-image:
+    radial-gradient(38rem 26rem at 12% -8%, color-mix(in oklab, var(--grad-from) 26%, transparent), transparent 70%),
+    radial-gradient(34rem 24rem at 105% 110%, color-mix(in oklab, var(--grad-to) 20%, transparent), transparent 70%);
+}
+
+/* ==========================================================================
+   5. Third-party surfaces (React Flow) — themed to match the tokens
+   ========================================================================== */
+
+.react-flow {
+  --xy-background-color: var(--canvas);
+  --xy-edge-stroke: var(--line-strong);
+  --xy-edge-stroke-selected: var(--brand);
+  --xy-connectionline-stroke: var(--brand);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface);
+  background: var(--line-strong);
+  transition: background 0.12s, transform 0.12s;
+}
+
+.react-flow__handle:hover,
+.react-flow__handle.connectingfrom,
+.react-flow__handle.connectingto {
+  background: var(--brand);
+  transform: scale(1.25);
+}
+
+.react-flow__edge-path {
+  stroke-width: 1.75;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.25;
+}
+
+/* A run in flight animates its edges, so progress is visible on the canvas. */
+.react-flow__edge.is-active .react-flow__edge-path {
+  stroke: var(--info-fg);
+  stroke-dasharray: 6 4;
+  animation: pe-dash 0.5s linear infinite;
+}
+
+.react-flow__edge-text {
+  fill: var(--fg-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.react-flow__edge-textbg {
+  fill: var(--surface);
+}
+
+.react-flow__controls {
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  fill: var(--fg-muted);
+  width: 28px;
+  height: 28px;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-2);
+  fill: var(--fg);
+}
+
+.react-flow__minimap {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.react-flow__minimap-mask {
+  fill: color-mix(in oklab, var(--canvas) 72%, transparent);
+}
+
+.react-flow__node.selected .step-card {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--brand) 22%, transparent), var(--shadow-md);
+}
+
+/* A node rises slightly under the pointer, like the cards it echoes. */
+.react-flow__node:hover .step-card {
+  box-shadow: var(--shadow-md);
+}
+
+/* An executing step breathes — paired with the animated dashes on its edges,
+   a glance at the canvas shows exactly where the run is. Selection still wins
+   (the rule above is more specific), and prefers-reduced-motion stills it. */
+.step-card.is-running {
+  animation: pe-halo 1.8s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   6. Rich text editor content (the HTML body field)
+   ========================================================================== */
+
+.rich-content {
+  @apply text-[13px] leading-relaxed;
+}
+
+.rich-content :where(p, ul, ol, blockquote, h1, h2, h3) {
+  margin: 0.4em 0;
+}
+
+.rich-content :where(h1) { @apply text-lg font-semibold; }
+.rich-content :where(h2) { @apply text-base font-semibold; }
+.rich-content :where(h3) { @apply text-sm font-semibold; }
+.rich-content :where(ul) { @apply list-disc pl-5; }
+.rich-content :where(ol) { @apply list-decimal pl-5; }
+.rich-content :where(a) { @apply text-brand-text underline; }
+.rich-content :where(img) { @apply max-w-full; }
+.rich-content :where(hr) { @apply my-2 border-t border-line; }
+.rich-content :where(blockquote) { @apply border-l-[3px] border-line pl-3 text-fg-muted; }
+.rich-content :where(table) { @apply border-collapse; }
+.rich-content :where(td, th) { @apply border border-line px-2 py-1; }
+
+.rich-content:empty::before {
+  content: attr(data-placeholder);
+  @apply text-fg-subtle;
+}

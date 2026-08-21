@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+process_engine.db
+.process_engine_auth
+.process_engine_key
+node_modules/
+designer/dist/
+.DS_Store
+workdir/

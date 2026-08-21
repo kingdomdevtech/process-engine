@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Process Engine — a self-hosted workflow engine. Design processes on a canvas, extend them with Python plugins, run them on a schedule or a webhook." />
+    <title>Process Engine — Processes, step by step</title>
+    <script>
+      // Apply the stored theme before first paint so the app never flashes light-on-dark.
+      (function () {
+        try {
+          var stored = localStorage.getItem('pe_theme') || 'system'
+          var dark =
+            stored === 'dark' ||
+            (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

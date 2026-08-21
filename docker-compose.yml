@@ -1,0 +1,28 @@
+# MySQL backend for process/step definitions and run history.
+#
+#   docker compose up -d mysql
+#   $env:PROCESS_ENGINE_DB_URL = "mysql+pymysql://process_engine:process_engine@127.0.0.1:3306/process_engine"
+#   python -m process_engine
+#
+# Without PROCESS_ENGINE_DB_URL the engine falls back to local SQLite.
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: process-engine-mysql
+    environment:
+      MYSQL_DATABASE: process_engine
+      MYSQL_USER: process_engine
+      MYSQL_PASSWORD: process_engine
+      MYSQL_ROOT_PASSWORD: change-me-root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uprocess_engine", "-pprocess_engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  mysql_data:

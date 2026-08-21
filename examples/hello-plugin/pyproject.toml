@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "process-engine-hello-plugin"
+version = "0.1.0"
+description = "Example external Plugin for process-engine, discovered via entry point"
+requires-python = ">=3.11"
+dependencies = ["process-engine"]
+
+# This one section is all it takes for the engine to discover the Plugin
+# after `pip install`; no changes to process-engine itself.
+[project.entry-points."process_engine.plugins"]
+hello = "hello_plugin:HelloPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]

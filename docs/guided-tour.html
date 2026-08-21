@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Engine — Guided Tour</title>
+<style>
+  /* Values mirror the designer's palette (designer/src/styles.css) so the
+     walkthrough looks like the product it documents. */
+  :root {
+    --ink: #151b25; --muted: #4e5662; --line: #d6d9de;
+    --accent: #1468bf; --bg-soft: #f3f5f8; --code-bg: #e6eaef;
+    --ok: #137d41; --warn: #955e00; --bad: #bc272c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: #fff;
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 96px; }
+  header.doc { border-bottom: 3px solid var(--accent); padding-bottom: 16px; margin-bottom: 24px; }
+  header.doc h1 { margin: 0 0 4px; font-size: 30px; }
+  header.doc p { margin: 0; color: var(--muted); }
+  nav.toc {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 32px;
+  }
+  nav.toc strong { display: block; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 40px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  code, pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 13px; background: var(--code-bg); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .callout { border-left: 4px solid var(--accent); background: var(--bg-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.ok { border-left-color: var(--ok); }
+  .path-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #eaf3ff; color: var(--accent); margin-right: 6px; }
+  .checklist li { margin-bottom: 4px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  kbd {
+    display: inline-block; min-width: 20px; padding: 1px 6px; margin: 0 1px;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--bg-soft); font: 600 11px/1.6 Consolas, monospace; color: var(--muted);
+  }
+  /* "Do this now" sequences — the spine of every walkthrough. */
+  ol.do { counter-reset: doitem; list-style: none; padding-left: 0; margin: 14px 0; }
+  ol.do > li {
+    counter-increment: doitem; position: relative;
+    padding: 0 0 12px 38px; border-left: 2px solid var(--line); margin-left: 12px;
+  }
+  ol.do > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.do > li::before {
+    content: counter(doitem); position: absolute; left: -13px; top: 0;
+    width: 24px; height: 24px; border-radius: 999px; background: var(--accent); color: #fff;
+    font: 700 12px/24px Consolas, monospace; text-align: center;
+  }
+  .screen { background: var(--bg-soft); color: var(--muted); font-size: 12px; }
+  .lead { font-size: 16px; color: var(--muted); }
+  .chapter { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 -6px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill-ok { background: #e2f6e6; color: var(--ok); }
+  .pill-bad { background: #ffebe9; color: var(--bad); }
+  .pill-skip { background: #e6eaef; color: var(--muted); }
+  .pill-run { background: #e2f6ff; color: #027291; }
+  @media print { nav.toc ol { columns: 1; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Process Engine — Guided Tour</h1>
+  <p>From an empty install to a process that runs on its own &nbsp;·&nbsp; v0.1.0 &nbsp;·&nbsp; last updated 2026-08-17</p>
+</header>
+
+<p class="lead">This is the walkthrough for the person who will <em>use</em> the product: you will
+sign in, build two working processes by hand, learn how data moves between steps, publish a
+version, put it on a schedule, and read the run history when something goes wrong. No Python
+required — the last chapter points at the developer guide if you want to add a step type of
+your own.</p>
+
+<div class="callout">
+  <strong>There is a matching tour inside the app.</strong> Press <kbd>Ctrl</kbd>+<kbd>K</kbd> and
+  choose <em>Take the guided tour</em> to be walked around the real screens; it highlights each
+  part of the interface in place. It runs automatically the first time you open the dashboard.
+  This document is the long version — the one to read when you want the reasoning, not just the
+  labels.
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#start">Before you start</a></li>
+    <li><a href="#signin">Signing in</a></li>
+    <li><a href="#map">The lay of the land</a></li>
+    <li><a href="#first">Walkthrough 1 — your first process</a></li>
+    <li><a href="#data">Moving data between steps</a></li>
+    <li><a href="#branch">Walkthrough 2 — branching</a></li>
+    <li><a href="#test">Testing one step at a time</a></li>
+    <li><a href="#publish">Validating, saving, publishing</a></li>
+    <li><a href="#triggers">Making it run by itself</a></li>
+    <li><a href="#runs">Watching runs</a></li>
+    <li><a href="#failure">When a step fails</a></li>
+    <li><a href="#loops">Loops: doing it once per row</a></li>
+    <li><a href="#secrets">Secrets and the file sandbox</a></li>
+    <li><a href="#faster">Getting around faster</a></li>
+    <li><a href="#extend">Adding your own step type</a></li>
+    <li><a href="#faq">Troubleshooting &amp; FAQ</a></li>
+  </ol>
+</nav>
+
+<p class="chapter">Chapter 1</p>
+<h2 id="start">1. Before you start</h2>
+
+<p>You need Python 3.11 or newer, and Node.js if you want the designer's development server.
+Everything runs locally; nothing is sent anywhere.</p>
+
+<pre><code>python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"                 # add ,excel / ,mysql if you need those plugins
+
+python -m process_engine                # the API + the built designer -> http://127.0.0.1:8000</code></pre>
+
+<p>That single command is enough if <code>designer/dist</code> has been built already: the API serves
+the interface and the API from one origin. If you are changing the interface, run the dev server
+alongside it in a second terminal:</p>
+
+<pre><code>cd designer
+npm install
+npm run dev                             # http://localhost:5173, proxies /api to :8000</code></pre>
+
+<div class="callout">
+  <strong>Which URL am I supposed to open?</strong> Port <strong>8000</strong> for a normal
+  install, port <strong>5173</strong> only while developing the front end. Both show the same
+  product; 5173 just rebuilds as you edit.
+</div>
+
+<h3>What the first start creates</h3>
+<table>
+  <tr><th>File</th><th>What it is</th></tr>
+  <tr><td><code>.process_engine_auth</code></td><td>The API token — your bootstrap credential. Treat it like a root password.</td></tr>
+  <tr><td><code>.process_engine_key</code></td><td>The encryption key for stored secrets. Lose it and every stored secret is unreadable.</td></tr>
+  <tr><td><code>process_engine.db</code></td><td>The SQLite database: processes, published versions, run history.</td></tr>
+  <tr><td><code>workdir/</code></td><td>The only folder file steps may touch (see <a href="#secrets">chapter 13</a>).</td></tr>
+</table>
+<p>Both credential files are generated on first run and are gitignored. Set
+<code>PROCESS_ENGINE_AUTH_TOKEN</code> and <code>PROCESS_ENGINE_SECRET_KEY</code> yourself for a real
+deployment, so the values survive a redeploy and live wherever you keep secrets.</p>
+
+<p class="chapter">Chapter 2</p>
+<h2 id="signin">2. Signing in</h2>
+
+<p>The sign-in page offers a username and password. On a fresh install nobody exists yet, so use
+the token instead:</p>
+
+<ol class="do">
+  <li>Open <code>http://127.0.0.1:8000/</code>. You land on <code>/login</code>.</li>
+  <li>Click <em>Use an API token instead</em>, paste the contents of
+      <code>.process_engine_auth</code>, and sign in. You are now an <strong>admin</strong>.</li>
+  <li>Go to <strong>Settings → Users</strong> and add a real account — a username, a password,
+      and the role <code>editor</code> or <code>admin</code>.</li>
+  <li>Sign out, sign back in as that user, and keep the token for emergencies and scripts.</li>
+</ol>
+
+<table>
+  <tr><th>Role</th><th>Can do</th></tr>
+  <tr><td><code>editor</code></td><td>Design, publish, run and inspect processes; manage secrets.</td></tr>
+  <tr><td><code>admin</code></td><td>Everything an editor can, plus creating, disabling and deleting users.</td></tr>
+</table>
+
+<p>Disabling a user takes effect immediately — their session is rejected on the very next
+request, not when it expires. Sessions last 12 hours.</p>
+
+<div class="callout">
+  <strong>Single sign-on.</strong> If the server has the <code>PROCESS_ENGINE_OIDC_*</code>
+  variables set, <em>Continue with Google</em> / <em>Continue with Microsoft</em> buttons appear
+  above the form. The email that comes back must match an existing username, unless the server
+  enables <code>PROCESS_ENGINE_SSO_AUTO_PROVISION</code>.
+</div>
+
+<p class="chapter">Chapter 3</p>
+<h2 id="map">3. The lay of the land</h2>
+
+<h3>The words</h3>
+<table>
+  <tr><th>Term</th><th>Meaning</th></tr>
+  <tr><td><strong>Process</strong></td><td>One automation: a graph of steps. What you edit on the canvas.</td></tr>
+  <tr><td><strong>Step</strong></td><td>One box on the canvas — a plugin plus the settings you gave it.</td></tr>
+  <tr><td><strong>Plugin</strong></td><td>A kind of step: <em>HTTP Request</em>, <em>Condition</em>, <em>Send Email</em>. The palette lists the ones installed.</td></tr>
+  <tr><td><strong>Connection</strong></td><td>An arrow. It carries one step's output into the next step's input.</td></tr>
+  <tr><td><strong>Port</strong></td><td>The labelled point an arrow leaves from. Most steps have one, <code>main</code>; <em>Condition</em> has <code>true</code> and <code>false</code>.</td></tr>
+  <tr><td><strong>Trigger</strong></td><td>What starts a process without you: a schedule, or an incoming webhook call.</td></tr>
+  <tr><td><strong>Run</strong></td><td>One execution, recorded: every step's input, output, timing and error.</td></tr>
+  <tr><td><strong>Version</strong></td><td>A published, frozen copy of a process. Triggers always fire the latest one.</td></tr>
+</table>
+
+<h3>The four screens</h3>
+<table>
+  <tr><th>Screen</th><th>Address</th><th>What it is for</th></tr>
+  <tr><td><strong>Processes</strong> (dashboard)</td><td><code>/app</code></td><td>Everything you have built, grouped into folders, with headline counts and recent activity.</td></tr>
+  <tr><td><strong>Editor</strong></td><td><code>/app/processes/&lt;id&gt;</code></td><td>The canvas. Where a process is built, tested and published.</td></tr>
+  <tr><td><strong>Runs</strong></td><td><code>/app/runs</code></td><td>Every execution across every process, filterable by status, with per-run detail.</td></tr>
+  <tr><td><strong>Settings</strong></td><td><code>/app/settings</code></td><td>Theme, secrets, the working directory, users, and the catalogue of installed plugins.</td></tr>
+</table>
+
+<h3>The editor, in one picture</h3>
+<pre class="screen"><code>┌──────────────────────────────────────────────────────────────────────────┐
+│ Processes / folder / My process        ● Unsaved   [Save] [Publish] [▶ Run draft]
+├───────────┬──────────────────────────────────────────┬───────────────────┤
+│ PALETTE   │                CANVAS                    │    INSPECTOR      │
+│           │                                          │                   │
+│ search…   │    ┌──────────┐        ┌──────────┐      │  nothing selected │
+│ ▸ data    │    │ Fetch    │ main   │ Decide   │ true │  → Test input     │
+│ ▸ flow    │    │ http_re… ├───────▶│ condition├──────▶    Triggers       │
+│ ▸ logic   │    └──────────┘        └────┬─────┘ false│    Recent runs    │
+│ ▸ network │                             └───────▶    │                   │
+│ ▸ utility │                                          │  a step selected  │
+│           │                                          │  → Input | Config │
+│ drag onto │        ⊕ ⊖ ⛶     100%          [minimap] │       | Output    │
+│ the canvas│                                          │                   │
+└───────────┴──────────────────────────────────────────┴───────────────────┘</code></pre>
+
+<ul>
+  <li><strong>Palette</strong> — every installed plugin, grouped by category and searchable.
+      Drag one onto the canvas, or click it to drop it into the middle of the view (dragging is
+      not operable by keyboard, so both routes exist).</li>
+  <li><strong>Canvas</strong> — the graph. Drag from a port to another step's left edge to
+      connect them; right-click a step to duplicate or delete it; <kbd>Del</kbd> removes what is
+      selected.</li>
+  <li><strong>Inspector</strong> — context-sensitive. With nothing selected it manages how the
+      process starts and what it has done lately; select a step and it becomes that step's
+      Input / Config / Output tabs.</li>
+</ul>
+
+<p class="chapter">Chapter 4 · walkthrough</p>
+<h2 id="first">4. Walkthrough 1 — your first process</h2>
+
+<p>Ten minutes, no external services: take a name in, build a greeting from it, and write that
+greeting to the log. It exercises the whole loop — build, configure, run, read the result.</p>
+
+<ol class="do">
+  <li><strong>Create it.</strong> On the dashboard press <em>New process</em>. The editor opens
+      on a blank canvas. In the breadcrumb at the top, replace <em>Untitled process</em> with
+      <code>Hello</code>, and type <code>Tutorial</code> in the folder box beside it.</li>
+
+  <li><strong>Add the first step.</strong> In the palette, find <strong>Transform</strong>
+      (category <em>data</em>) and drag it onto the canvas. The node shows its display name and,
+      underneath, the plugin key <code>transform</code>.</li>
+
+  <li><strong>Configure it.</strong> Click the node. The inspector switches to the step's tabs
+      with <strong>Config</strong> open. Set <em>Step name</em> to <code>greet</code>, then under
+      <em>Fields</em> press <em>Add field</em> and enter:
+      <pre><code>Field: greeting
+Value: Hello {{ trigger.name }}!</code></pre>
+      Leave <em>Incoming data</em> on <em>Keep it and add these fields</em>.</li>
+
+  <li><strong>Add the second step.</strong> Drag <strong>Log</strong> (category <em>utility</em>)
+      onto the canvas to the right of <code>greet</code>. Name it <code>announce</code> and set
+      its <em>Message</em> to <code>{{ input.greeting }}</code>.</li>
+
+  <li><strong>Wire them up.</strong> Drag from the <code>main</code> port on the right edge of
+      <code>greet</code> to the left edge of <code>announce</code>. An arrow appears — that is
+      the whole of "run this next, with that data".</li>
+
+  <li><strong>Give it something to work with.</strong> Click the empty canvas to deselect. The
+      inspector shows <em>Test input</em>. Replace its contents with:
+      <pre><code>{"name": "Ada"}</code></pre>
+      The panel tells you whether what you typed is valid JSON before you run anything.</li>
+
+  <li><strong>Run it.</strong> Press <em>Run draft</em> (or <kbd>Ctrl</kbd>+<kbd>Enter</kbd>).
+      Both nodes turn green with a <span class="pill pill-ok">succeeded</span> flag, and the
+      inspector shows the run.</li>
+
+  <li><strong>Read what happened.</strong> Select <code>announce</code> and open its
+      <strong>Input</strong> tab. You are looking at real values from the run just now:
+      <code>{"name": "Ada", "greeting": "Hello Ada!"}</code>. The greeting was built by the step
+      before it and delivered along the arrow.</li>
+</ol>
+
+<div class="callout ok">
+  <strong>What you just proved.</strong> A step's config is a template resolved immediately
+  before it runs; <code>{{ trigger.name }}</code> reached into the payload the run started with,
+  and <code>{{ input.greeting }}</code> reached into whatever arrived down the arrow. Everything
+  else in this product is a variation on those two moves.
+</div>
+
+<p><em>Run draft</em> saves first, then executes the draft you can see — not a published version.
+It is the loop you will live in while building.</p>
+
+<p class="chapter">Chapter 5</p>
+<h2 id="data">5. Moving data between steps</h2>
+
+<p>Anywhere a step setting takes a value, it can take an expression instead. Expressions are
+written <code>{{ dotted.path }}</code> and are resolved just before the step runs.</p>
+
+<table>
+  <tr><th>Write this</th><th>To get</th></tr>
+  <tr><td><code>{{ trigger.customer.id }}</code></td><td>Something from the payload the run started with — the webhook body, or the test input.</td></tr>
+  <tr><td><code>{{ input.total }}</code></td><td>Something from the payload that arrived at <em>this</em> step.</td></tr>
+  <tr><td><code>{{ steps.fetch.output.rows }}</code></td><td>An earlier step's result, by step name. Use this when the value comes from further back than the previous step.</td></tr>
+  <tr><td><code>{{ steps.fetch.outputs.error }}</code></td><td>An earlier step's result on a named port other than <code>main</code>.</td></tr>
+  <tr><td><code>{{ variables.region }}</code></td><td>A process variable — a value set once for the whole process.</td></tr>
+  <tr><td><code>{{ secrets.smtp_password }}</code></td><td>A stored credential, decrypted at the moment the step runs and never written into the process or the run record.</td></tr>
+</table>
+
+<h3>Three rules worth knowing</h3>
+<ul>
+  <li><strong>They are lookups, never code.</strong> There is no arithmetic, no function calls,
+      no <code>if</code>. That is deliberate: a process definition is data an editor authors, and
+      data must never be executable.</li>
+  <li><strong>A whole-string expression keeps its type.</strong> <code>"{{ trigger.total }}"</code>
+      arrives as the number <code>250</code>, while <code>"Total: {{ trigger.total }}"</code>
+      arrives as the text <code>"Total: 250"</code>.</li>
+  <li><strong>A path that does not exist fails the step</strong>, with a message naming the
+      segment it could not find — <code>cannot resolve {{ trigger.naem }}: no 'naem' at
+      trigger</code>. A typo is a failed run, not a silent empty value.</li>
+</ul>
+
+<h3>You do not have to type them</h3>
+<p>Every assignable field has an <strong>ƒx</strong> button. It opens a searchable list of every
+expression this step can legitimately use — the trigger payload and each upstream step's
+outputs — with a sample value beside each one, taken from the most recent run. Click one and it
+is written into the field.</p>
+
+<p>The step's <strong>Input</strong> tab is the same information from the other direction: the
+actual values reaching this step, as a browsable tree. Click any value there and it assigns the
+expression that addresses it to the field you choose. When you are not sure what an earlier step
+produced, this is the fastest place to look.</p>
+
+<div class="callout">
+  <strong>Name your steps in plain words.</strong> A step's name is also its handle:
+  <code>{{ steps.fetch_order.output.total }}</code>. Names with spaces or punctuation cannot be
+  used as a path, so the picker falls back to the step's id — readable names pay off in every
+  expression downstream. Names must be unique within a process.
+</div>
+
+<p class="chapter">Chapter 6 · walkthrough</p>
+<h2 id="branch">6. Walkthrough 2 — branching</h2>
+
+<p>Real processes decide. This one calls a public API, checks a value in the response, and takes
+one of two paths. It also demonstrates the single most surprising rule in the engine — what
+happens to the path <em>not</em> taken.</p>
+
+<ol class="do">
+  <li><strong>New process</strong>, named <code>Branch demo</code>.</li>
+
+  <li><strong>Fetch something.</strong> Drag <strong>HTTP Request</strong> (category
+      <em>network</em>) on. Name it <code>fetch</code>. Method <code>GET</code>, URL
+      <code>https://api.github.com/repos/python/cpython</code>. Leave
+      <em>Authentication</em> on <em>None</em>.</li>
+
+  <li><strong>Decide.</strong> Drag <strong>Condition</strong> (category <em>logic</em>) on and
+      name it <code>popular</code>. Connect <code>fetch</code> → <code>popular</code>. Configure:
+      <pre><code>Value to check : {{ steps.fetch.output.body.stargazers_count }}
+Test           : is greater than
+Compared with  : 1000</code></pre>
+      Notice the node has two ports, <code>true</code> and <code>false</code>, instead of one.</li>
+
+  <li><strong>Two outcomes.</strong> Drag two <strong>Log</strong> steps on, named
+      <code>shout</code> and <code>shrug</code>. Connect the <code>true</code> port to
+      <code>shout</code> and the <code>false</code> port to <code>shrug</code>. Give them
+      messages that tell them apart, e.g. <code>popular: {{ input.stargazers_count }} stars</code>
+      and <code>not popular enough</code>.</li>
+
+  <li><strong>Run it</strong> with <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. Three nodes go green — and
+      the fourth turns grey with a <span class="pill pill-skip">skipped</span> flag.</li>
+</ol>
+
+<h3>Skipped is not failed</h3>
+<p>A step runs when every arrow into it has settled — either data arrived, or the path it was
+waiting on is dead. A <em>Condition</em> emits on exactly one of its two ports; the other emits
+nothing, so everything downstream of it is skipped, and the skip cascades to <em>their</em>
+downstream steps. The run as a whole still succeeds.</p>
+
+<div class="callout warn">
+  <strong>Do not "fix" a skipped branch.</strong> Grey nodes after a condition are the feature
+  working. A branch that never skips is a branch that always runs.
+</div>
+
+<h3>Joining branches back together</h3>
+<p>Point both branches at the same later step and it runs once, as soon as both paths have
+settled — the one that received data and the one that died. If two live paths deliver into the
+same step, it receives both payloads grouped by the port they arrived on, rather than one of them
+silently winning.</p>
+
+<p class="chapter">Chapter 7</p>
+<h2 id="test">7. Testing one step at a time</h2>
+
+<p>Re-running a whole process to check one step is slow, and sometimes rude to whatever the
+earlier steps talk to. Select a step and open its <strong>Output</strong> tab: <em>Test
+&ldquo;&lt;step&gt;&rdquo;</em> runs that step alone, using the data recorded from the most recent
+run, and shows you three things:</p>
+
+<ul>
+  <li><strong>Output</strong> — what it emitted, per port.</li>
+  <li><strong>Resolved config</strong> — its settings with every expression filled in. This is
+      the panel that answers "why did it send <em>that</em>?".</li>
+  <li><strong>Input used</strong> — the payload it was given.</li>
+</ul>
+
+<div class="callout warn">
+  <strong>The step really executes.</strong> Testing a step that sends mail sends mail; testing
+  one that writes rows writes rows. Nothing is added to the run history, but the side effects are
+  real. The panel says so above the button, every time.
+</div>
+
+<p>The step needs recorded data to stand on, so run the process once before leaning on this.
+Save first, too — the button saves for you, so what is tested is what you can see.</p>
+
+<p class="chapter">Chapter 8</p>
+<h2 id="publish">8. Validating, saving, publishing</h2>
+
+<h3>The three states of your work</h3>
+<table>
+  <tr><th>State</th><th>What it means</th></tr>
+  <tr><td><strong>Unsaved</strong> — amber dot in the breadcrumb</td><td>Changes exist only in this browser tab. Closing the tab loses them; the browser will warn you.</td></tr>
+  <tr><td><strong>Saved</strong> — green tick</td><td>The draft is stored on the server. Still not what triggers run.</td></tr>
+  <tr><td><strong>Published</strong> — <code>v3</code> badge on the dashboard</td><td>A frozen, numbered copy. This is what schedules, webhooks and <em>Run now</em> execute.</td></tr>
+</table>
+
+<p><kbd>Ctrl</kbd>+<kbd>S</kbd> saves. Every save also validates, and problems come back in two
+places: a red badge on the offending node (hover it for the list) and, for problems that belong
+to the process rather than a step, a red banner across the top of the canvas.</p>
+
+<h3>What validation checks</h3>
+<ul>
+  <li>Required settings that are still empty, per step.</li>
+  <li>Steps whose plugin is not installed on this server, and duplicate step names or ids.</li>
+  <li>Connections to a port that does not exist, or to a step that has been deleted.</li>
+  <li>Schedule triggers whose cron expression is not valid, and webhook paths with illegal
+      characters.</li>
+  <li><strong>Cycles.</strong> The graph must stay acyclic — see <a href="#loops">chapter 12</a>
+      for how to repeat work instead.</li>
+</ul>
+
+<p><em>Publish</em> saves, validates, and — only if the process is clean — snapshots version
+<code>n+1</code>. Published versions are immutable, and each run records which version it used,
+so a run from last Tuesday can still be read against the definition that produced it. Editing
+afterwards changes the draft only; publish again when you want the change to be live.</p>
+
+<p class="chapter">Chapter 9</p>
+<h2 id="triggers">9. Making it run by itself</h2>
+
+<p>Deselect everything and the inspector shows <strong>Triggers</strong>. Add one of two kinds.</p>
+
+<h3>Schedule</h3>
+<p>A cron expression — <code>minute · hour · day of month · month · day of week</code> — with
+presets for the common ones (every 15 minutes, hourly, daily at 07:00, weekdays at 08:00). The
+built-in scheduler fires it against the latest published version.</p>
+<pre><code>*/15 * * * *     every 15 minutes
+0 7 * * *        every day at 07:00
+0 8 * * 1-5      08:00, Monday to Friday
+0 0 1 * *        midnight on the 1st of each month</code></pre>
+
+<h3>Webhook</h3>
+<p>Gives you a URL. Anything that can make an HTTP POST can start the process, and the request
+body arrives as the trigger payload — so <code>{{ trigger.order_id }}</code> works exactly as it
+did with the test input.</p>
+<pre><code>POST http://your-host:8000/api/hooks/&lt;path&gt;
+Content-Type: application/json
+
+{"order_id": 4711}</code></pre>
+<p>Leave the path blank and it defaults to the process id. The copy button beside the URL puts
+the full address on your clipboard.</p>
+
+<div class="callout warn">
+  <strong>A webhook URL is the credential.</strong> Webhook endpoints take no bearer token
+  deliberately — that is what makes them callable by systems that cannot authenticate. Anyone
+  who has the URL can start the process, so treat it like a password: choose an unguessable
+  path, share it narrowly, and change it if it leaks.
+</div>
+
+<p>Both kinds have an <em>enabled</em> checkbox, so a schedule can be parked without losing its
+expression. And both fire the <strong>latest published version</strong> — if a change is not
+behaving in production, the first question is whether it was published.</p>
+
+<h3>Being told when it runs</h3>
+<p>Under the triggers, the same panel can email people about this process's runs — when a run
+starts, succeeds, fails, or finishes whatever the outcome. Both answer the same question, "what
+happens <em>around</em> a run", which is why they sit together. The mail server those emails go
+through is server-wide and lives under <strong>Settings → Notifications</strong>, where an admin
+can also send a test message.</p>
+
+<p class="chapter">Chapter 10</p>
+<h2 id="runs">10. Watching runs</h2>
+
+<p><strong>Runs</strong> in the sidebar lists every execution across every process, newest first,
+filterable by status and searchable by run id or process name. While anything is live the list
+refreshes itself, and says so.</p>
+
+<table>
+  <tr><th>Status</th><th>Meaning</th></tr>
+  <tr><td><span class="pill pill-run">running</span></td><td>In flight. Edges leaving the current step animate on the canvas.</td></tr>
+  <tr><td><span class="pill pill-ok">succeeded</span></td><td>Every step that was reached finished.</td></tr>
+  <tr><td><span class="pill pill-bad">failed</span></td><td>A step failed and nothing handled it; the remaining steps were skipped.</td></tr>
+  <tr><td><span class="pill pill-skip">skipped</span></td><td>(A step, not a run.) Every path into it was dead.</td></tr>
+  <tr><td><span class="pill pill-skip">paused</span></td><td>Stopped between steps, on request. Resumable.</td></tr>
+  <tr><td><span class="pill pill-skip">cancelled</span></td><td>Stopped between steps and not resumable.</td></tr>
+</table>
+
+<p>Click a run to open its detail: each step with its status, how long it took, how many attempts
+it needed, its input, its output per port, and its error if it had one. That record is written
+after <em>every</em> step, not at the end — which is what makes the next two behaviours possible.</p>
+
+<h3>Pause, resume, cancel</h3>
+<p>A long run can be paused between steps and resumed later; a cancelled one stops for good.
+Resuming does not start over: steps that already succeeded are replayed from their recorded
+outputs, and execution picks up where it stopped.</p>
+
+<h3>It survives a restart</h3>
+<p>If the engine is restarted mid-run, runs left in <em>running</em> are picked up automatically
+on the next start and resumed the same way. The trade-off is worth stating plainly: a step that
+had already succeeded is not executed again, but a step that was <em>in flight</em> when the
+process died will run again — side effects are at-least-once, so anything that charges, sends or
+writes should be safe to repeat.</p>
+
+<h3>Being emailed instead of watching</h3>
+<p>A process that runs at 3&nbsp;a.m. is one nobody is watching. Open a process, click the empty
+canvas so the inspector shows the process itself, and use the <strong>Notifications</strong>
+panel to have it email you instead. Tick when you want to hear about it:</p>
+
+<table>
+  <tr><th>Tick</th><th>You get an email</th></tr>
+  <tr><td>starts</td><td>As the run begins.</td></tr>
+  <tr><td>succeeds</td><td>Only when it finishes cleanly.</td></tr>
+  <tr><td>fails</td><td>Only when it fails — with the step that broke and its error.</td></tr>
+  <tr><td>finishes</td><td>However it turns out, cancelled included.</td></tr>
+</table>
+
+<p>Ticking <em>finishes</em> as well as <em>fails</em> does not produce two emails for one run:
+each run is reported once, under the most specific thing you asked for. So the common setup —
+<em>fails</em> on its own — is exactly what it looks like, and <em>fails</em> + <em>finishes</em>
+means "tell me when it breaks, and tell me when it worked too".</p>
+
+<p>Recipients are whoever created the process (ticked by default, and skipped if their username
+is not an email address) plus anyone else you list. The box suggests people who already have an
+account here, but any address is allowed. Each message names the process, the run, when it
+started and how long it took, and links straight to the run detail.</p>
+
+<div class="callout">
+<p>The emails go through one mail server for the whole deployment, which an admin sets up once
+under <strong>Settings › Notifications</strong>. Pick how it sends:
+<strong>SMTP server</strong> (host, port, encryption, sign-in) or <strong>Amazon SES</strong>
+(region, and either an access key pair or — when the engine runs inside AWS — nothing at all,
+letting the instance role sign the call). Either way you give a From address, credentials are
+encrypted at rest and never shown again, and a <em>Send test email</em> button proves it works
+before you rely on it. Until it is configured the notification panel says so; nothing is silently
+dropped.</p>
+<p>This is separate from the <strong>Send Email</strong> <em>step</em>, which keeps its own
+settings. A step sends mail because it is part of the work; a notification tells you how the work
+went.</p>
+</div>
+
+<p>Iterations of a <code>for_each</code> sub-process stay silent — one run you started means one
+set of emails, not one per row. And because delivery is best effort, a mail server that is down
+is logged, never allowed to fail the run it was reporting on.</p>
+
+<p class="chapter">Chapter 11</p>
+<h2 id="failure">11. When a step fails</h2>
+
+<p>A step fails when the thing it was doing raised an error — a 500 from an API, a bad
+credential, an expression pointing at a field that is not there. What happens next is decided by
+the step, in this order:</p>
+
+<ol>
+  <li><strong>Retry.</strong> The engine re-attempts the step up to its <code>max_attempts</code>,
+      waiting <code>backoff_seconds</code> and doubling the wait each time. The default is one
+      attempt — no retry — so this is opt-in.</li>
+  <li><strong>Error routing.</strong> If the step's <code>error</code> port is connected, the
+      failure becomes data — <code>{"error": "...", "step": "..."}</code> — delivered down that
+      branch, and the run carries on.</li>
+  <li><strong>Otherwise the run fails.</strong> Everything still pending is marked skipped, and
+      the run detail carries the message.</li>
+</ol>
+
+<div class="callout">
+  <strong>Where these are set.</strong> Retries, timeouts and the <code>error</code> port belong
+  to the step in the process definition. The designer does not expose them yet — set them
+  through the API (<code>PUT /api/processes/&lt;id&gt;</code>) on the step's <code>retry</code> and
+  <code>timeout_seconds</code> fields, and by adding a connection whose
+  <code>source_port</code> is <code>"error"</code>. Everything else in this tour is doable
+  entirely in the interface.
+</div>
+
+<h3>Reading the failure</h3>
+<p>Open the run, find the red step, and read three things in order: its <strong>error</strong>
+(what went wrong), its <strong>resolved config</strong> (what it was actually asked to do, with
+expressions filled in), and its <strong>input</strong> (what it was given). Most failures are
+visible in the second of those — an expression that resolved to something you did not expect.</p>
+
+<p class="chapter">Chapter 12</p>
+<h2 id="loops">12. Loops: doing it once per row</h2>
+
+<p>There are no loop arrows. A process is a directed <em>acyclic</em> graph, and the validator
+rejects a cycle. Repetition is a step instead: <strong>For Each</strong> runs a whole published
+process once per item of a list.</p>
+
+<ol class="do">
+  <li><strong>Build the per-item process first.</strong> Make a second process that handles
+      exactly one item. Inside it, the item is <code>{{ trigger.item }}</code> and its position in
+      the list is <code>{{ trigger.index }}</code>.</li>
+  <li><strong>Publish it.</strong> For Each runs published versions only.</li>
+  <li><strong>Add For Each</strong> (category <em>flow</em>) to the outer process and configure:
+      <pre><code>List to work through      : {{ steps.fetch.output.body.items }}
+Process to run for each one: &lt;pick the published process&gt;
+Run at the same time       : 1        (advanced — raise carefully)
+Carry on when an item fails: off      (advanced)</code></pre></li>
+</ol>
+
+<p>Its output tells you how it went: <code>count</code>, <code>succeeded</code>,
+<code>failed</code>, and <code>results</code> — one entry per item, each with the sub-run's id,
+status, output and error. Raising <em>Run at the same time</em> speeds things up only as far as
+whatever the sub-process touches can cope with; a database or a mail relay usually has an
+opinion.</p>
+
+<div class="callout">
+  <strong>The list has to be a list.</strong> If the expression resolves to a single object or to
+  nothing, the step fails with a message saying so. Check the shape in the ƒx picker or the Input
+  tab before you run it.
+</div>
+
+<p class="chapter">Chapter 13</p>
+<h2 id="secrets">13. Secrets and the file sandbox</h2>
+
+<h3>Secrets</h3>
+<p><strong>Settings → Secrets</strong> stores named credentials, encrypted at rest. The API only
+ever returns their <em>names</em> — there is no screen, and no request, that reads a value back.
+Use one in any step as <code>{{ secrets.smtp_password }}</code>; it is decrypted at the moment
+the step runs and never lands in the process definition, the run record, or your browser.</p>
+
+<p>Fields that expect a credential offer the stored names in a picker, so the expression rarely
+has to be typed. Deleting a secret does not warn the steps that used it — they fail on their next
+run, which is the honest outcome.</p>
+
+<h3>The working directory</h3>
+<p>Steps that touch the disk — <code>s3_download</code>, <code>azure_blob_download</code>,
+<code>file_purge</code> — resolve every path inside one folder, shown read-only under
+<strong>Settings → Files</strong>.</p>
+<table>
+  <tr><th>You write</th><th>What happens</th></tr>
+  <tr><td><code>downloads/orders.csv</code></td><td>Lands inside the working directory.</td></tr>
+  <tr><td><code>C:\Windows\System32\…</code></td><td>Rejected before anything is read or written.</td></tr>
+  <tr><td><code>../../somewhere-else</code></td><td>Rejected — containment is checked after the path is fully resolved.</td></tr>
+  <tr><td>a symlink pointing outside</td><td>Rejected — links are followed before the check, not after.</td></tr>
+</table>
+<p>The folder is set on the server with <code>PROCESS_ENGINE_WORK_DIR</code> and cannot be changed
+from the interface. That is the point: signing in as an editor must not let you widen what your
+steps are allowed to touch.</p>
+
+<p class="chapter">Chapter 14</p>
+<h2 id="faster">14. Getting around faster</h2>
+
+<h3>Keyboard</h3>
+<table>
+  <tr><th>Keys</th><th>Does</th></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Command palette — jump to any process or page, and run the open page's own commands.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save the open process.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Run the draft.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo / redo a canvas change.</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></td><td>Tidy up steps — re-lay the whole graph in dependency order.</td></tr>
+  <tr><td><kbd>Del</kbd></td><td>Delete the selected step or connection.</td></tr>
+  <tr><td><kbd>/</kbd></td><td>Focus the search box on the dashboard.</td></tr>
+  <tr><td><kbd>[</kbd></td><td>Collapse or expand the sidebar.</td></tr>
+  <tr><td><kbd>?</kbd></td><td>Show this list in the app.</td></tr>
+</table>
+<p>Undo and redo cover canvas <em>structure</em> — adding, connecting, moving and deleting steps,
+including <em>Tidy up</em>. Typing in a config field is not undoable by <kbd>Ctrl</kbd>+<kbd>Z</kbd>;
+that is the browser's own undo inside the field.</p>
+
+<h3>Folders</h3>
+<p>A folder is just a label on the process. Set it in the editor breadcrumb, or use <em>Move…</em>
+on a dashboard card. The dashboard groups by folder, each group collapsible, with a filter and a
+search across names and folders. Processes saved before you started using folders show up under
+<em>Uncategorized</em>.</p>
+
+<h3>Canvas direction</h3>
+<p>The layout menu in the toolbar switches the canvas between left-to-right and top-to-bottom, and
+re-lays the graph when you switch (leaving the old positions would have every arrow doubling
+back). The direction is a preference of your browser, not part of the process — a colleague can
+read the same process the other way round.</p>
+
+<h3>Theme</h3>
+<p>Light, dark, or follow the operating system. Set it in the account menu at the bottom of the
+sidebar, in Settings → Appearance, or with the command palette. It is remembered per browser and
+applied before the first paint, so there is no white flash on load.</p>
+
+<h3>Other useful moves</h3>
+<ul>
+  <li><strong>Duplicate a step</strong> — right-click it, or the copy button in the inspector
+      header. Config is copied; connections are not.</li>
+  <li><strong>Duplicate a process</strong> — <em>Duplicate</em> on its dashboard card. The copy is
+      an unpublished draft and its triggers are disabled, so it cannot take over the original's
+      schedule or webhook.</li>
+  <li><strong>Edit config as JSON</strong> — the <em>JSON</em> tab beside <em>Form</em>. <em>Show
+      example</em> reveals a fully worked example for that plugin; <em>Use this</em> drops it into
+      the editor, where it changes nothing until you press <em>Apply JSON</em>.</li>
+  <li><strong>Run a published version now</strong> — <em>Run now</em> on a dashboard card. It runs
+      the latest published version immediately, with all of its side effects, and asks first.</li>
+</ul>
+
+<p class="chapter">Chapter 15</p>
+<h2 id="extend">15. Adding your own step type</h2>
+
+<p>When no combination of the built-in steps does what you need, the extension seam is a plugin —
+a small Python class. The palette entry, the config form, the ƒx picker and the Input/Output tabs
+are all generated from it; there is no front-end work.</p>
+
+<pre><code>from pydantic import BaseModel
+from process_engine.plugin import Plugin, PluginContext, PluginManifest, PluginResult
+
+class UppercaseConfig(BaseModel):
+    text: str = "{{ input.message }}"
+
+class UppercasePlugin(Plugin):
+    manifest = PluginManifest(key="uppercase", name="Uppercase", category="custom")
+    Config = UppercaseConfig
+
+    async def execute(self, ctx: PluginContext) -> PluginResult:
+        return PluginResult.main({"text": ctx.config.text.upper()})</code></pre>
+
+<p>Save that as <code>plugins/uppercase.py</code>, restart the API, reload the designer — it is in
+the palette. Plugins are discovered at startup only, which is why a new one always needs a
+restart. <strong>Settings → Plugins</strong> lists everything the server currently has, with each
+one's key, category and output ports.</p>
+
+<p>The full contract — ports, retries, blocking work, error handling, packaging as a pip
+installable, and testing — is in the companion document
+<a href="developer-guide.html">developer-guide.html</a>.</p>
+
+<p class="chapter">Chapter 16</p>
+<h2 id="faq">16. Troubleshooting &amp; FAQ</h2>
+
+<table>
+  <tr><th>Symptom</th><th>What is going on</th></tr>
+  <tr><td>My change did not take effect when the schedule fired.</td><td>Triggers run the latest <em>published</em> version. Save is not publish — press <em>Publish</em>.</td></tr>
+  <tr><td>A step is grey and says <em>skipped</em>.</td><td>Every path into it was dead — usually the other side of a condition. Not an error.</td></tr>
+  <tr><td>The whole run is grey after one red step.</td><td>A failed step with no error branch fails the run; everything still pending is skipped.</td></tr>
+  <tr><td><code>cannot resolve {{ … }}</code></td><td>The path does not exist in this step's data. Open the Input tab and look at the real shape, then re-assign with ƒx.</td></tr>
+  <tr><td>The ƒx picker shows no sample values.</td><td>It samples the most recent run. Run the process once first.</td></tr>
+  <tr><td>A required field is flagged but I filled it in.</td><td>Config changes are saved with the process — press <kbd>Ctrl</kbd>+<kbd>S</kbd>; the badge clears on the next validate.</td></tr>
+  <tr><td>My new plugin is not in the palette.</td><td>Discovery happens at API startup. Restart <code>python -m process_engine</code>, then reload the page.</td></tr>
+  <tr><td><em>Publish</em> was refused.</td><td>The process has validation issues. Look for red node badges and the banner over the canvas.</td></tr>
+  <tr><td>A file step fails with <code>PathNotAllowed</code>.</td><td>The path resolved outside the working directory. See <a href="#secrets">chapter 13</a>; the root is server configuration.</td></tr>
+  <tr><td>I cannot add users.</td><td>That needs the <code>admin</code> role. Sign in with the API token if you are locked out.</td></tr>
+  <tr><td>Everything returns 401.</td><td>Sessions last 12 hours; sign in again. If a user was disabled, their sessions stop working immediately.</td></tr>
+  <tr><td>I lost <code>.process_engine_key</code>.</td><td>Stored secrets cannot be decrypted. Re-enter them; nothing else is affected.</td></tr>
+</table>
+
+<h3>Where next</h3>
+<ul>
+  <li><a href="developer-guide.html">developer-guide.html</a> — building plugins, the engine
+      contract, testing.</li>
+  <li><a href="runbook.html">runbook.html</a> — running this in production: Excel/COM constraints,
+      SMTP notes, backups, troubleshooting.</li>
+  <li><code>http://127.0.0.1:8000/docs</code> — the live API reference, for scripting anything the
+      interface does.</li>
+</ul>
+
+<footer>Process Engine v0.1.0 · guided tour generated 2026-08-17 · self-contained document, safe to email or archive.
+Companion documents: <em>docs/developer-guide.html</em> (plugins), <em>docs/runbook.html</em> (operations).
+The same tour runs inside the app — <kbd>Ctrl</kbd>+<kbd>K</kbd> → <em>Take the guided tour</em>.</footer>
+</div>
+</body>
+</html>
