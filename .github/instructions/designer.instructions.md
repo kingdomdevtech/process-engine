@@ -9,7 +9,8 @@ applyTo: "designer/**"
 React 18 + react-router + @xyflow/react + Tailwind v4, **plain JSX — no TypeScript**. A
 multi-page app: `/login`, `/app` dashboard, `/app/processes/:id` editor, `/app/runs`,
 `/app/settings`; `/` just redirects to `/app`. Vite proxies `/api` and `/help` to
-`http://127.0.0.1:8000`.
+`http://127.0.0.1:8000`; in the deployed container nginx does the same, so fetches are
+same-origin either way (`VITE_API_BASE` only for a separately hosted designer).
 
 ## No per-plugin frontend code
 
@@ -68,6 +69,10 @@ keeps light and dark in sync and makes a rebrand one edit.
 - Selecting a step gives Input / Config / Output tabs (`StepInput` → `/steps/{id}/input`,
   `StepPanel`, `StepOutput` → `/steps/{id}/preview`); the **ƒx** button opens the picker fed by
   `/steps/{id}/picker`.
+- `/steps/{id}/preview` may answer **202** with a poll URL instead of a result: in queue mode a
+  Windows engine runs the step, so `StepOutput` polls `/previews/{id}` until it settles. The same
+  goes for a Run that comes back PENDING. Treat "not finished yet" as a normal reply, not an
+  error, and say who you are waiting for (`/api/workers`) rather than spinning silently.
 - Shared UI lives in `components/ui/`. Use the promise-based `useDialogs()` `confirm`/`prompt`
   and the focus-trapped `Modal` — never `window.confirm` / `window.prompt` / `alert`.
 - A page contributes Ctrl+K entries through `useRegisterCommands` (`commands.js`). The palette

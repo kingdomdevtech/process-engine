@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Engine — Developer Guide</title>
+<style>
+  /* Values mirror the designer's palette (designer/src/styles.css) so the
+     guide looks like the product it documents. */
+  :root {
+    --ink: #151b25; --muted: #4e5662; --line: #d6d9de;
+    --accent: #1468bf; --bg-soft: #f3f5f8; --code-bg: #e6eaef;
+    --ok: #137d41; --warn: #955e00; --bad: #bc272c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: #fff;
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 96px; }
+  header.doc { border-bottom: 3px solid var(--accent); padding-bottom: 16px; margin-bottom: 24px; }
+  header.doc h1 { margin: 0 0 4px; font-size: 30px; }
+  header.doc p { margin: 0; color: var(--muted); }
+  nav.toc {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 32px;
+  }
+  nav.toc strong { display: block; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 40px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  code, pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 13px; background: var(--code-bg); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .callout { border-left: 4px solid var(--accent); background: var(--bg-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .checklist li { margin-bottom: 4px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  kbd {
+    display: inline-block; min-width: 20px; padding: 1px 6px; margin: 0 1px;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--bg-soft); font: 600 11px/1.6 Consolas, monospace; color: var(--muted);
+  }
+  ol.do { counter-reset: doitem; list-style: none; padding-left: 0; margin: 14px 0; }
+  ol.do > li {
+    counter-increment: doitem; position: relative;
+    padding: 0 0 12px 38px; border-left: 2px solid var(--line); margin-left: 12px;
+  }
+  ol.do > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.do > li::before {
+    content: counter(doitem); position: absolute; left: -13px; top: 0;
+    width: 24px; height: 24px; border-radius: 999px; background: var(--accent); color: #fff;
+    font: 700 12px/24px Consolas, monospace; text-align: center;
+  }
+  .lead { font-size: 16px; color: var(--muted); }
+  .chapter { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 -6px; }
+  .diagram {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px; overflow-x: auto; font: 12px/1.45 Consolas, monospace; color: var(--ink);
+    white-space: pre; margin: 16px 0;
+  }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no { color: var(--bad); font-weight: 700; }
+  @media print { nav.toc ol { columns: 1; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Process Engine — Developer Guide</h1>
+  <p>Writing plugins, and the design rules a change has to respect &nbsp;·&nbsp; v0.1.0 &nbsp;·&nbsp; last updated 2026-08-22</p>
+</header>
+
+<p class="lead">The extension seam of this product is the <strong>Plugin</strong>: one Python class
+that becomes a step type, complete with a palette entry, a generated config form, an ƒx data
+picker and Input/Output tabs. No frontend work. This guide is the full contract — ports, retries,
+blocking work, the filesystem sandbox, the config form as a UI contract, testing, and packaging —
+plus the handful of architectural rules that keep the codebase able to run split across two
+operating systems.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#setup">Setting up</a></li>
+    <li><a href="#shape">The shape of the codebase</a></li>
+    <li><a href="#contract">The Plugin contract</a></li>
+    <li><a href="#failure">Failure, retries and timeouts</a></li>
+    <li><a href="#ports">Ports and branching</a></li>
+    <li><a href="#blocking">Blocking work</a></li>
+    <li><a href="#paths">Paths and the sandbox</a></li>
+    <li><a href="#form">The Config is a UI contract</a></li>
+    <li><a href="#expressions">Expressions and secrets</a></li>
+    <li><a href="#register">Registering it</a></li>
+    <li><a href="#compat">Not breaking saved processes</a></li>
+    <li><a href="#test">Testing</a></li>
+    <li><a href="#package">Packaging as a pip installable</a></li>
+    <li><a href="#engine">Engine semantics worth knowing</a></li>
+  </ol>
+</nav>
+
+<p class="chapter">Chapter 1</p>
+<h2 id="setup">1. Setting up</h2>
+
+<pre><code>python -m venv .venv
+.\.venv\Scripts\Activate.ps1                 # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-dev.txt          # all three packages, editable, plus pytest
+
+pytest                                       # the whole suite
+pytest tests/test_engine.py -k branching     # one test
+python examples\demo.py                      # a process end to end, no server
+
+python -m process_engine_api                 # the API + designer -> http://127.0.0.1:8000
+python -m process_engine                     # an engine: claims queued jobs, fires cron
+cd designer; npm install; npm run dev        # the designer with hot reload -> :5173</code></pre>
+
+<p><code>requirements-dev.txt</code> installs all three distributions editable — that is the
+one-machine setup; a deployment installs a subset. It includes the <code>excel</code> extra, which
+is a no-op off Windows. Async tests need no decorator — pytest-asyncio runs in <code>auto</code>
+mode.</p>
+
+<p class="callout warn"><strong><code>python -m process_engine</code> is not optional.</strong> The API
+executes nothing: every run and every single-step preview is queued through the database and
+claimed by an engine. Without one running, the Run button leaves a PENDING run spinning and the
+Output tab tells you nothing is listening. That is the deployed shape reproduced on your desk, not
+a mode — see <a href="architecture.html">architecture.html</a> for why.</p>
+
+<p class="chapter">Chapter 2</p>
+<h2 id="shape">2. The shape of the codebase</h2>
+
+<p>Three layers, strictly separated. Most review comments on a first contribution are about one of
+these boundaries.</p>
+
+<table>
+  <tr><th>Layer</th><th>Where</th><th>Rule</th></tr>
+  <tr><td><strong>Definition</strong></td><td><code>process_engine_core/models.py</code></td><td>A <code>ProcessDefinition</code> is a serializable JSON document. No runtime state, no UI concerns. The designer's <code>position</code> fields are the only exception, and are ignored by the engine.</td></tr>
+  <tr><td><strong>Engine</strong></td><td><code>process_engine/engine.py</code></td><td>Executes a definition and returns a <code>ProcessInstance</code>. It never touches storage, HTTP or email. If you find yourself importing <code>storage</code> or <code>smtplib</code> here, something has gone wrong.</td></tr>
+  <tr><td><strong>Designer</strong></td><td><code>designer/</code></td><td>React + @xyflow/react + Tailwind v4, plain JSX. Builds every form from the API. Adding a plugin must require <em>zero</em> changes here.</td></tr>
+</table>
+
+<p>Persistence, scheduling and notifications are composed <em>around</em> the pure engine by
+<code>process_engine/worker.py</code>, which owns every run from the moment it claims the job.</p>
+
+<h3>Three distributions, and what each host installs</h3>
+
+<div class="diagram">  packages/process_engine_api/          packages/process_engine/
+     FastAPI, routes, SSO,                 engine, worker, scheduler,
+     users, the data picker                expressions, plugins/ (execute)
+              │                                       │
+              └──────────► packages/process_engine_core/ ◄────────┘
+                  models, storage, jobs, plugin contract,
+                  plugins/ (manifest + Config), registry, ui,
+                  workspace, secrets_store, urls, notifications
+
+     <span class="no">the two tiers never import each other</span></div>
+
+<p>The engine is deployed on hosts that install <strong>no web stack at all</strong>, and the
+designer's host installs <strong>no engine at all</strong> — that is what makes the
+Linux-designer / Windows-engine split possible, and it is enforced by packaging rather than by
+discipline. There is no <code>execute()</code> in the API's wheel to call, so "the container
+cannot run a step" is a fact about the install:</p>
+
+<pre><code>docker exec …  python -c "import process_engine"   # ModuleNotFoundError — as designed</code></pre>
+
+<p>So a <code>fastapi</code> or <code>uvicorn</code> import inside <code>process_engine</code> or
+<code>process_engine_core</code> is a design break, and <code>process_engine_api</code> importing
+<code>process_engine</code> is a worse one. Before adding a module, ask <strong>"which hosts have
+to install this?"</strong> — if the answer is "both", it belongs in core. That is why
+<code>urls.py</code>, <code>notifications.py</code> and <code>workspace.py</code> live there rather
+than beside the code that seems to own them.</p>
+
+<p><a href="architecture.html">architecture.html</a> draws this, and everything that follows from
+it, in diagrams.</p>
+
+<p class="chapter">Chapter 3</p>
+<h2 id="contract">3. The Plugin contract</h2>
+
+<p>A Plugin is three things: a <code>manifest</code>, a <code>Config</code>, and
+<code>execute</code>. The first two are what a step <em>is</em> — enough to draw the palette entry,
+generate the form and validate a saved definition — and the designer's host needs them. The third
+is what it <em>does</em>, and only an engine ever calls it. So the class is <strong>split across
+two modules</strong>, along exactly the line the deployment is split on.</p>
+
+<p>The spec half, in <code>packages/process_engine_core/plugins/greet.py</code> — installed on
+every host:</p>
+
+<pre><code>from pydantic import BaseModel, Field
+
+from ..plugin import PluginManifest, PluginSpec
+from ..ui import ui
+
+
+class GreetConfig(BaseModel):
+    name: str = Field(
+        default="",
+        title="Who to greet",
+        description="A name, or an expression like {{ steps.lookup.output.customer }}.",
+        examples=["Ada Lovelace"],
+        json_schema_extra=ui(group="Message"),
+    )
+
+
+class GreetSpec(PluginSpec):
+    """One line an editor would understand — this is what the palette shows."""
+
+    manifest = PluginManifest(
+        key="greet",
+        name="Greet",
+        description="Emit a greeting for a name.",
+        category="utility",
+    )
+    Config = GreetConfig</code></pre>
+
+<p>The behaviour half, in <code>packages/process_engine/plugins/greet.py</code> — installed on
+engine hosts only:</p>
+
+<pre><code>from process_engine_core.plugin import Plugin, PluginContext, PluginResult
+from process_engine_core.plugins.greet import GreetSpec
+
+
+class GreetPlugin(GreetSpec, Plugin):
+    async def execute(self, ctx: PluginContext) -> PluginResult:
+        ctx.logger.info("greeting %s", ctx.config.name)
+        return PluginResult.main({"message": f"Hello, {ctx.config.name}!"})</code></pre>
+
+<p>The runnable class <em>is</em> the spec plus behaviour, so the two halves cannot disagree about
+the key, the ports or what the step accepts. Put the editor-facing docstring on the spec — that is
+the module the palette copy comes from — and operator-facing detail (what it touches on disk,
+which credential it needs) on the implementation.</p>
+
+<h3>The manifest</h3>
+<table>
+  <tr><th>Field</th><th>Notes</th></tr>
+  <tr><td><code>key</code></td><td>The registry key, and what saved definitions store. <strong>Renaming it breaks them</strong> — see <a href="#compat">chapter 11</a>.</td></tr>
+  <tr><td><code>name</code>, <code>description</code></td><td>Palette wording. Write for someone who does not know what a bind parameter is.</td></tr>
+  <tr><td><code>category</code></td><td>Match an existing one where you can — the designer tints nodes by category and falls back gracefully for a new one.</td></tr>
+  <tr><td><code>inputs</code>, <code>outputs</code></td><td>Lists of <code>Port</code>. Both default to a single <code>main</code>.</td></tr>
+  <tr><td><code>aliases</code></td><td>Retired keys that still resolve here. They work in <code>registry.get()</code> but are excluded from the palette.</td></tr>
+</table>
+
+<h3>What <code>execute</code> receives</h3>
+<p><code>PluginContext</code> is everything a step can see:</p>
+
+<table>
+  <tr><th>Attribute</th><th>What it is</th></tr>
+  <tr><td><code>config</code></td><td>A validated instance of your <code>Config</code>, with every <code>{{ expression }}</code> already resolved.</td></tr>
+  <tr><td><code>input</code></td><td>The single upstream payload — or <code>{port: [payloads]}</code> at a join.</td></tr>
+  <tr><td><code>all_inputs</code></td><td>Every delivered payload grouped by input port, when you need the full picture.</td></tr>
+  <tr><td><code>variables</code></td><td>The process's variables.</td></tr>
+  <tr><td><code>logger</code></td><td>Log through this: the lines are attributed to the step.</td></tr>
+  <tr><td><code>run_id</code>, <code>step_id</code>, <code>step_name</code></td><td>Identity, for logs and for building idempotency keys.</td></tr>
+  <tr><td><code>run_subprocess</code></td><td>Awaitable, injected by the engine — how <code>for_each</code> runs a published sub-process per item. Depth-capped.</td></tr>
+</table>
+
+<h3>What it returns</h3>
+<ul class="checklist">
+  <li><code>PluginResult.main(data)</code> — emit on the <code>main</code> port.</li>
+  <li><code>PluginResult.on("true", data)</code> — emit on a named port.</li>
+  <li>A plain <code>dict</code> — shorthand for <code>main</code>.</li>
+  <li><code>None</code> — the step succeeded and produced nothing.</li>
+</ul>
+
+<div class="callout">
+  <strong>The return value is data an editor will read.</strong> It shows up in the Output tab, in
+  the ƒx picker as sample values, and in <code>{{ steps.x.output.… }}</code> expressions. So give
+  it stable, named keys — <code>{"rows": [...], "count": 12}</code>, not a bare list — and keep the
+  shape the same whether it found one row or none. A shape that changes with the data is a shape
+  nobody can write an expression against.
+</div>
+
+<p class="chapter">Chapter 4</p>
+<h2 id="failure">4. Failure, retries and timeouts</h2>
+
+<p><strong>Failure is a raise.</strong> The engine owns everything around it:</p>
+
+<ul class="checklist">
+  <li>The step's <code>retry</code> policy (<code>max_attempts</code>, <code>backoff_seconds</code>,
+      doubling after each failure) is applied around <code>execute</code>.</li>
+  <li><code>timeout_seconds</code> bounds each attempt.</li>
+  <li>After the last attempt, <code>{error, step}</code> is routed to the step's
+      <code>error</code> port if anything is connected to it; otherwise the run fails and
+      everything still pending becomes <em>skipped</em>.</li>
+</ul>
+
+<pre><code><span class="no">✗</span>  return {"ok": False, "error": str(exc)}   # the run "succeeds"; nobody is told
+<span class="yes">✓</span>  raise RuntimeError(f"the server said {response.status_code}")</code></pre>
+
+<p>Catching your own failure to return a status flag defeats retries, the error port, the run's
+red badge and the failure notification all at once. Catch an exception only to <em>improve</em> it
+— add the URL, the row count, the workbook name — and re-raise.</p>
+
+<p>Raise a message an editor can act on. <code>"connection refused"</code> is worse than
+<code>"could not reach smtp.example.com:587 — connection refused"</code>; they cannot read your
+code, and the message is what lands in the run history and the notification email.</p>
+
+<p class="chapter">Chapter 5</p>
+<h2 id="ports">5. Ports and branching</h2>
+
+<p>Branching is not a control-flow construct — it is a step choosing which port to emit on.
+Declare the ports, then emit on one:</p>
+
+<pre><code>manifest = PluginManifest(
+    key="threshold",
+    name="Threshold",
+    category="logic",
+    outputs=[Port(name="over", description="value exceeded the limit"),
+             Port(name="under")],
+)
+
+async def execute(self, ctx: PluginContext) -> PluginResult:
+    value = float(ctx.input["value"])
+    port = "over" if value > ctx.config.limit else "under"
+    return PluginResult.on(port, {"value": value})</code></pre>
+
+<p>A step runs when every incoming connection is <em>settled</em> — either its upstream emitted on
+that port, or the path is dead. A step with zero deliveries is <strong>skipped</strong>, and the
+skip cascades downstream. That is the whole mechanism: the <code>under</code> branch is grey
+because <code>over</code> fired, and nothing had to be told to stop.</p>
+
+<div class="callout warn">
+  <strong>Skipped branches are not a bug to fix.</strong> The temptation, on seeing half a canvas
+  greyed out, is to make skipped steps run with empty input. That breaks every condition in every
+  saved process. The graph is also required to be a DAG — <code>validate()</code> rejects cycles,
+  and iteration is <code>for_each</code> running a sub-process, never a loop edge.
+</div>
+
+<p class="chapter">Chapter 6</p>
+<h2 id="blocking">6. Blocking work</h2>
+
+<p>Everything on the execution path is <code>async</code>. Any blocking client — COM, PyMySQL,
+smtplib, boto3, a walk over a network share — goes through
+<code>await asyncio.to_thread(...)</code>:</p>
+
+<pre><code>async def execute(self, ctx: PluginContext) -> dict:
+    # COM is blocking; keep the event loop free
+    return await asyncio.to_thread(self._refresh, ctx.config, ctx.logger)</code></pre>
+
+<p>Each plugin attempt already runs on its own worker thread, so blocking code hurts only its own
+step rather than the whole run. <code>to_thread</code> is still the rule, for one specific reason:
+a <strong>blocked event loop cannot enforce <code>timeout_seconds</code></strong> until the call
+returns. A step that ignores its timeout is a step that can wedge a run indefinitely.
+<code>excel_refresh.py</code> and <code>send_email.py</code> are the models.</p>
+
+<p>Import optional dependencies <em>lazily</em>, inside <code>execute</code> or a helper, so the
+plugin still registers on a host without boto3 / pywin32 / PyMySQL installed. A plugin that fails
+to import takes the whole registry load with it.</p>
+
+<h3>Ready steps run in parallel</h3>
+<p>One asyncio task per ready step. <strong>Connections are the only ordering guarantee</strong>,
+so never rely on <code>{{ steps.x }}</code> reaching a step that is not downstream of
+<code>x</code> — it may not have run yet. If you need ordering, draw the connection.</p>
+
+<p class="chapter">Chapter 7</p>
+<h2 id="paths">7. Paths and the sandbox</h2>
+
+<p>Step config is data an editor authors, so a path in it is untrusted input. Resolve every one
+through <code>workspace.resolve()</code> — never <code>Path(cfg.some_path)</code>:</p>
+
+<pre><code>from .. import workspace
+
+target = workspace.resolve(ctx.config.folder)      # PathNotAllowed -> the step fails</code></pre>
+
+<p>Relative paths join onto <code>PROCESS_ENGINE_WORK_DIR</code>; absolute paths must already be
+inside it; containment is checked <em>after</em> symlinks and junctions resolve.
+<code>PathNotAllowed</code> is a <code>ValueError</code>, so it fails the step like any other
+error.</p>
+
+<div class="callout bad">
+  <strong>A plugin that walks a tree must re-check every entry it discovers</strong>, not just the
+  folder it was handed — a junction inside an allowed folder points wherever it likes. See
+  <code>file_purge._matches</code>.
+</div>
+
+<p>Shared behaviour belongs in a <code>_</code>-prefixed module rather than in two plugins:
+<code>_download.py</code> owns <code>target_path</code> resolution and the
+<code>.part</code>-then-rename discipline so <code>s3_download</code> and
+<code>azure_blob_download</code> cannot drift apart (and deliberately share an output shape);
+<code>_mysql.py</code> owns connection config. Two plugins doing the same thing differently is the
+bug.</p>
+
+<p><code>excel_refresh</code> and <code>send_email</code>'s <code>attachments</code> predate the
+sandbox and still take unrestricted paths. Moving them behind it would break saved definitions, so
+it is a planned migration, not a drive-by fix.</p>
+
+<p class="chapter">Chapter 8</p>
+<h2 id="form">8. The Config is a UI contract</h2>
+
+<p>The designer builds every step form from <code>Config.model_json_schema()</code> and ships
+<strong>no per-plugin frontend code</strong>. So everything about <em>how</em> a field should be
+edited has to travel inside the schema, via <code>ui()</code> from
+<code>process_engine_core.ui</code>:</p>
+
+<pre><code>from ..ui import ui, when
+
+class MailConfig(BaseModel):
+    host: str = Field(default="", title="Mail server",
+                      json_schema_extra=ui(group="Mail server",
+                                           placeholder="smtp.office365.com"))
+    password: str = Field(default="", title="Password",
+                          json_schema_extra=ui(group="Mail server",
+                                               widget="password", secret=True))
+    auth: str = Field(default="password", title="Sign-in method",
+                      json_schema_extra=ui(labels={"password": "Username and password",
+                                                   "oauth2_client_credentials": "OAuth 2"}))
+    client_id: str = Field(default="", json_schema_extra=ui(
+        group="Mail server", show_if=when("auth", "oauth2_client_credentials")))</code></pre>
+
+<table>
+  <tr><th>Hint</th><th>Effect</th></tr>
+  <tr><td><code>group="…"</code></td><td>Splits the form into sections. Fields sharing a group render together.</td></tr>
+  <tr><td><code>advanced=True</code></td><td>Folds the field into that section's collapsed disclosure. <strong>Use sparingly</strong> — for genuine expert knobs only. A field an ordinary user needs, hidden behind “Advanced”, is a field nobody finds.</td></tr>
+  <tr><td><code>show_if=when(field, *values)</code></td><td>Hides a field until it applies. Presentation only: a hidden field keeps its value.</td></tr>
+  <tr><td><code>labels={...}</code></td><td>Human wording per enum value.</td></tr>
+  <tr><td><code>secret=True</code></td><td>Offers the stored secrets by name, so nobody has to type <code>{{ secrets.x }}</code>.</td></tr>
+  <tr><td><code>widget=</code></td><td>Overrides the control the type implies. Validated against <code>ui.WIDGETS</code> <em>at import time</em> — a typo raises there, not silently in the browser.</td></tr>
+  <tr><td><code>unit=</code>, <code>placeholder=</code>, <code>add_label=</code>, <code>key_label=</code>/<code>value_label=</code></td><td>Refine the control's wording.</td></tr>
+  <tr><td><code>Field(examples=[…])</code></td><td>Drives both the field placeholder and the worked example behind <em>Show example</em>. Steer that through examples rather than special-casing your plugin in the designer.</td></tr>
+  <tr><td><code>format="html"</code></td><td>On a string, renders the rich HTML editor (see <code>send_email_ses.body_html</code>).</td></tr>
+</table>
+
+<p>Types already imply the right control, so most fields need no <code>widget</code> at all:
+<code>list[str]</code> is a chip editor, <code>dict[str, X]</code> a name/value editor, an enum a
+dropdown, <code>bool</code> a switch.</p>
+
+<h3>Design the field, not the form</h3>
+<p>These forms are aimed at people who do not know what a header or a bind parameter is. Prefer a
+field that needs no explanation:</p>
+
+<table>
+  <tr><th><span class="no">Harder to use</span></th><th><span class="yes">Better</span></th></tr>
+  <tr><td><code>use_tls: bool</code> + <code>use_ssl: bool</code></td><td>one <code>encryption</code> dropdown</td></tr>
+  <tr><td>“leave <code>statement</code> empty to mean the procedure”</td><td><code>action: statement | procedure</code></td></tr>
+  <tr><td>a <code>dict</code> the editor has to know the keys of</td><td>named fields, grouped</td></tr>
+</table>
+
+<p class="chapter">Chapter 9</p>
+<h2 id="expressions">9. Expressions and secrets</h2>
+
+<p><code>{{ dotted.path }}</code> expressions in step config are resolved just before execution,
+against <code>{trigger, steps, variables, input}</code>, and <em>then</em> the result is validated
+against your <code>Config</code>. So <code>ctx.config</code> is always concrete — you never see an
+expression at run time.</p>
+
+<p>Two properties matter when designing a field:</p>
+<ul class="checklist">
+  <li><strong>They are lookups, never <code>eval</code>.</strong> There is no expression language
+      to extend, and adding one would turn step config into remote code execution.</li>
+  <li><strong>A whole-string expression keeps its type.</strong> <code>"{{ steps.q.output.rows }}"</code>
+      arrives as a list, not as its string repr — so a <code>list[dict]</code> field can be filled
+      by an expression.</li>
+</ul>
+
+<p>Secrets are Fernet-encrypted rows; the API exposes only their names, and
+<code>{{ secrets.name }}</code> resolves at execution time on the host that runs the step. Mark a
+credential field <code>secret=True</code> and the editor gets a picker instead of a place to paste
+a password. Never log a resolved credential — <code>ctx.logger</code> output is stored with the
+run and readable by anyone who can see the process.</p>
+
+<p class="chapter">Chapter 10</p>
+<h2 id="register">10. Registering it</h2>
+
+<p>There are exactly two discovery paths, both resolved at <strong>startup only</strong>.</p>
+
+<ol class="do">
+  <li><strong>Two modules and two list entries</strong>, one per side of the seam: the spec in
+      <code>packages/process_engine_core/plugins/</code>, imported and listed in
+      <code>BUILTIN_SPECS</code>; the implementation in
+      <code>packages/process_engine/plugins/</code>, imported and listed in
+      <code>BUILTIN_PLUGINS</code>. All four, or it never registers.</li>
+  <li>A pip package exposing an entry point in group <code>process_engine.plugins</code> — see
+      <a href="#package">chapter 13</a>.</li>
+</ol>
+
+<p>Each tier loads its own list — <code>spec_registry()</code> on the API,
+<code>default_registry()</code> on an engine — and both build the same
+<code>PluginRegistry</code>. That is why the two lists have to stay in step: every key in the
+palette must be a key some engine can actually run.
+<code>test_both_tiers_advertise_exactly_the_same_plugins</code> fails when they drift, so a spec
+with no implementation (or the reverse) is caught by <code>pytest</code>, not in production.</p>
+
+<div class="callout">
+  <strong>There is deliberately no drop-in folder.</strong> A step executes on whichever engine
+  claims its job, so it cannot depend on a loose <code>.py</code> file that happens to be sitting
+  on one host. A plugin belonging to this product goes in the product's source and ships with it;
+  an entry-point package has to be installed on <em>every</em> host that executes.
+</div>
+
+<p>Because discovery is at startup, the API <em>and every engine</em> must be restarted before a
+new plugin appears — and an API that knows a plugin no engine has will offer a step in the palette
+that fails at run time. Keep the package version the same everywhere.</p>
+
+<h3>Checklist for a new built-in</h3>
+<ol class="do">
+  <li>Spec module in <code>packages/process_engine_core/plugins/</code>, unique
+      <code>manifest.key</code>, a category that matches an existing one where possible.</li>
+  <li>Imported <em>and</em> in <code>BUILTIN_SPECS</code>.</li>
+  <li>Implementation module in <code>packages/process_engine/plugins/</code>, subclassing the
+      spec — imported <em>and</em> in <code>BUILTIN_PLUGINS</code>.</li>
+  <li>Any new dependency added as an extra in the <strong>engine</strong> package's
+      <code>pyproject.toml</code> and imported lazily. Core stays dependency-light: the
+      designer's host installs it and must not have to pull an SDK in to draw a form.</li>
+  <li>Tests in <code>tests/</code>, plus a pass through
+      <code>tests/test_config_forms.py</code> and <code>tests/test_registry.py</code>.</li>
+  <li><a href="runbook.html">runbook.html</a> updated if it has operational constraints —
+      credentials, network, or a platform requirement.</li>
+  <li>No designer changes. If the form needs something the schema cannot express, say so rather
+      than special-casing the plugin in <code>SchemaForm.jsx</code>.</li>
+</ol>
+
+<p class="chapter">Chapter 11</p>
+<h2 id="compat">11. Not breaking saved processes</h2>
+
+<p>Definitions are stored JSON documents, so <strong>every field name is a wire format</strong>.
+Three rules follow.</p>
+
+<h3>Never rename a plugin key</h3>
+<pre><code>manifest = PluginManifest(
+    key="send_email_smtp",
+    aliases=["send_email"],      # the old key still resolves here
+    ...
+)</code></pre>
+<p>Aliases resolve in <code>registry.get()</code> and <code>__contains__</code> but are excluded
+from <code>manifests()</code>, so a retired key keeps working without reappearing in the
+palette.</p>
+
+<h3>Reshaping a config field is just as breaking</h3>
+<p>Splitting <code>use_tls</code>/<code>use_ssl</code> into one <code>encryption</code> field is the
+right design change and would silently drop the setting from every saved step. Pair it with a
+<code>model_validator(mode="before")</code> that maps the retired keys:</p>
+
+<pre><code>@model_validator(mode="before")
+@classmethod
+def _accept_retired_keys(cls, data: Any) -> Any:
+    if isinstance(data, dict) and "encryption" not in data:
+        if data.get("use_ssl"):
+            data = {**data, "encryption": "ssl"}
+        elif data.get("use_tls"):
+            data = {**data, "encryption": "starttls"}
+    return data</code></pre>
+
+<p><code>send_email.py</code>, <code>_mysql.py</code> and <code>mysql_execute.py</code> are the
+worked examples. Cover the mapping in <code>tests/test_config_forms.py</code>.</p>
+
+<h3>Published versions are immutable</h3>
+<p><code>processes</code> holds only the editable draft; <em>publish</em> snapshots it into
+<code>process_versions</code>. A running instance records the version it used and finishes on it.
+Migrations act on the draft, never on a published snapshot.</p>
+
+<p class="chapter">Chapter 12</p>
+<h2 id="test">12. Testing</h2>
+
+<p>One file per seam, named after it; add to the existing file rather than starting a new one
+unless the seam is genuinely new.</p>
+
+<ul class="checklist">
+  <li><strong>Build a <code>ProcessDefinition</code> in the test</strong> rather than loading a
+      fixture file. Leaving every <code>position</code> at (0,0) is normal — the designer lays out
+      an unpositioned graph on load.</li>
+  <li><strong>Prefer a real in-process run</strong> over mocking the engine. Mock only at the
+      outside edge: SMTP, boto3, COM, HTTP.</li>
+  <li>Engine tests drive <code>Engine</code> directly with <code>default_registry()</code>. API
+      tests go through <code>process_engine_api.create_app(db, registry)</code> with a temp SQLite
+      database — there is no module-level <code>app</code> to import, on purpose.</li>
+  <li><strong>An API test never gets a finished run back.</strong> Everything is queued, so a route
+      answers with a PENDING instance or a <code>202</code>; the test then drives a worker to settle
+      it. <code>tests/test_worker.py</code> shows the pattern.</li>
+  <li><code>tests/test_config_forms.py</code> reads the generated schemas back and fails on a
+      <code>show_if</code> naming a field that no longer exists, wording for a renamed option, a
+      list widget on a dict, or a required field hidden by default. A new plugin gets behaviour
+      tests <em>and</em> a pass through this one.</li>
+</ul>
+
+<pre><code>async def test_greet_emits_a_message():
+    definition = ProcessDefinition(
+        name="greet",
+        steps=[Step(id="g", plugin="greet", config={"name": "Ada"})],
+    )
+    instance = await Engine(make_registry()).run(definition)
+
+    assert instance.status is RunStatus.SUCCEEDED
+    step = next(run for run in instance.step_runs if run.step_id == "g")
+    assert step.outputs["main"]["message"] == "Hello, Ada!"</code></pre>
+
+<p><code>instance.step_runs</code> is a list of <code>StepRun</code>, in execution order, and each
+holds its emitted data as <code>outputs[port]</code> — <code>tests/test_engine.py</code> keeps a
+small <code>run_of(instance, step_id)</code> helper for exactly this.</p>
+
+<p>Finish with <code>pytest</code>, and <code>cd designer; npm run build</code> if anything under
+<code>designer/</code> changed.</p>
+
+<p class="chapter">Chapter 13</p>
+<h2 id="package">13. Packaging as a pip installable</h2>
+
+<p>For a plugin another team owns on its own release cycle. The whole mechanism is one
+<code>pyproject.toml</code> section — see <code>examples/hello-plugin/</code>:</p>
+
+<pre><code>[project]
+name = "process-engine-hello-plugin"
+version = "0.1.0"
+dependencies = ["process-engine-core"]     # the contract, not the engine
+
+# this section is all it takes; no changes to Process Engine itself
+[project.entry-points."process_engine.plugins"]
+hello = "hello_plugin:HelloPlugin"</code></pre>
+
+<p>Depend on <strong><code>process-engine-core</code></strong>, never on
+<code>process-engine</code>: core is the distribution holding the contract and the one both tiers
+install, so depending on the engine would make the package unloadable on the API host — where its
+manifest has to be read to draw the palette. Both registries scan the same entry-point group, so
+one install is discovered by whichever tier it lands on.</p>
+
+<pre><code>pip install -e examples/hello-plugin        # then restart the API and every engine</code></pre>
+
+<p>The class itself is a built-in's two halves in one place — same manifest, same
+<code>Config</code>, same <code>execute</code> — because a package installed only where it executes
+has no seam to split along. The difference is deployment: it must be on every host that runs a
+step, which is precisely why a plugin belonging to <em>this</em> product is split across
+<code>packages/process_engine_core/plugins/</code> and
+<code>packages/process_engine/plugins/</code> instead.</p>
+
+<p class="chapter">Chapter 14</p>
+<h2 id="engine">14. Engine semantics worth knowing</h2>
+
+<p>Non-obvious behaviour that a plugin author will eventually meet.</p>
+
+<table>
+  <tr><th>Behaviour</th><th>Consequence for you</th></tr>
+  <tr><td><strong>Single-step preview really executes the plugin.</strong> <em>Test this step</em> builds input from a recorded run and runs your <code>execute</code> for real, persisting nothing.</td><td>Previewing a step with side effects performs them — the same trade-off n8n makes. Worth a word in your docstring if the side effect is expensive or irreversible.</td></tr>
+  <tr><td><strong>Preview and real runs must build input identically.</strong> Both go through <code>combine_deliveries()</code> / <code>deliveries_from_run()</code>.</td><td>If you touch input assembly, change those — never one call site.</td></tr>
+  <tr><td><strong>Instance state is persisted after every step</strong>, and a run interrupted mid-flight is resumed by replaying completed steps from recorded output.</td><td>Side effects are <strong>at-least-once</strong>. An externally visible step is better off idempotent; <code>ctx.run_id</code> + <code>ctx.step_id</code> make a stable idempotency key.</td></tr>
+  <tr><td><strong>Pause and cancel are cooperative, between steps.</strong></td><td>A long-running attempt is not interrupted. If your plugin can work in chunks, shorter attempts make a run more controllable.</td></tr>
+  <tr><td><strong>A step never executes in the API's process, and often not on its machine.</strong> Every run and preview is claimed off the queue by an engine.</td><td>“The engine's filesystem” and “the API's filesystem” are not the same place. Path descriptions should say <em>as seen from the machine running the engine</em>, as <code>excel_refresh</code> does.</td></tr>
+  <tr><td><strong><code>for_each</code> runs a published sub-process per item</strong> via <code>ctx.run_subprocess</code>, depth-capped.</td><td>That is the iteration primitive. Do not add loop edges, and do not build a second one.</td></tr>
+</table>
+
+<h3>Where next</h3>
+<ul>
+  <li><a href="architecture.html">architecture.html</a> — the building blocks in diagrams: the
+      three distributions, the plugin seam, and what a run does between the two hosts.</li>
+  <li><a href="guided-tour.html">guided-tour.html</a> — the product from a user's side. Worth
+      reading before designing a config form.</li>
+  <li><a href="runbook.html">runbook.html</a> — deployment, the two-host split, and the
+      operational constraints your plugin may add to.</li>
+  <li><code>CLAUDE.md</code> in the repository — the authoritative design document, with the
+      reasoning behind everything here.</li>
+  <li><code>{your origin}/docs</code> — the live OpenAPI reference.</li>
+</ul>
+
+<footer>
+  Process Engine — developer guide. Companions: <em>docs/guided-tour.html</em> (using the product),
+  <em>docs/runbook.html</em> (operations).
+</footer>
+
+</div>
+</body>
+</html>

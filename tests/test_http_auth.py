@@ -12,7 +12,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from process_engine.plugin import PluginContext
+from process_engine_core.plugin import PluginContext
 from process_engine.plugins.http_request import HttpRequestPlugin
 
 

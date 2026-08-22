@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "process-engine"
+version = "0.1.0"
+description = "Process Engine executor: runs processes, claims queued jobs, fires schedules"
+requires-python = ">=3.11"
+# The engine host's install. No web framework at any point: `python -m
+# process_engine` reaches everything it needs — work, definitions, secrets —
+# through the database, and serves no HTTP in either direction.
+dependencies = [
+    "process-engine-core==0.1.0",
+    "httpx>=0.27",  # the http_request plugin
+]
+
+[project.optional-dependencies]
+# One extra per plugin family: an engine host installs the ones its work needs,
+# and every SDK import is lazy so a missing extra fails that step rather than
+# the process.
+excel = [
+    "pywin32>=306; sys_platform == 'win32'",
+]
+mysql = [
+    "pymysql>=1.1",
+]
+aws = [
+    "boto3>=1.34",  # Amazon SES email + S3 download plugins
+]
+azure = [
+    "azure-storage-blob>=12.19",  # Azure blob download plugin
+    "azure-identity>=1.15",       # only for its "Azure identity of this machine" sign-in
+]
+
+[project.scripts]
+process-engine-worker = "process_engine.worker:main"  # same program as `python -m process_engine`
+
+[tool.setuptools]
+packages = ["process_engine", "process_engine.plugins"]
+package-dir = { "process_engine" = "." }

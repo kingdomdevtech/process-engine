@@ -16,15 +16,15 @@
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 
-import { getUser } from './api.js'
+import { engineUrl, getUser } from './api.js'
 
 const SEEN_KEY = 'pe_tour_seen'
 /* Bumping this re-offers the tour once to everyone — for a release that moves
    things around. Leave it alone for copy edits. */
 const VERSION = '1'
 
-/** The long-form walkthrough, served by the API from the docs folder. */
-export const TOUR_DOC_URL = '/help/guided-tour.html'
+/** The long-form walkthrough, served by the engine from the docs folder. */
+export const TOUR_DOC_URL = engineUrl('/help/guided-tour.html')
 
 export const TOUR_STEPS = [
   {

@@ -1,18 +1,16 @@
-import time
-
 from fastapi.testclient import TestClient
 
-from process_engine.api import create_app
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+from process_engine_api import create_app
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database
 
 TOKEN = "test-token"
 
 
 def make_client() -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
-    client = TestClient(create_app(db=Database("sqlite://"), registry=registry, auth_token=TOKEN))
+    db = Database("sqlite://")
+    client = TestClient(create_app(db=db, registry=spec_registry(), auth_token=TOKEN))
+    client.db = db  # what the engine_host fixture claims this test's jobs from
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -27,21 +25,21 @@ DEFINITION = {
 }
 
 
-def wait_for_terminal(client: TestClient, run_id: str, tries: int = 50) -> dict:
-    for _ in range(tries):
-        run = client.get(f"/api/runs/{run_id}").json()
-        if run["status"] in ("succeeded", "failed", "cancelled", "paused"):
-            return run
-        time.sleep(0.1)
-    raise AssertionError(f"run {run_id} never finished: {run}")
-
-
 def test_api_requires_auth():
     client = make_client()
     anonymous_headers = {"Authorization": ""}
     assert client.get("/api/plugins", headers=anonymous_headers).status_code == 401
     assert client.get("/api/plugins", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/api/plugins").status_code == 200  # with the real token
+
+
+def test_health_needs_no_credential():
+    """The container's HEALTHCHECK and any load balancer in front of it poll
+    this, and neither holds a token. It answers liveness only — what the
+    installation is doing is /api/queue, behind the bearer token."""
+    response = make_client().get("/api/health", headers={"Authorization": ""})
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_plugins_endpoint_feeds_the_palette():
@@ -77,7 +75,25 @@ def test_handbooks_are_served_at_help(tmp_path, monkeypatch):
     assert client.get("/help/nothing-here.html").status_code == 404
 
 
-def test_full_lifecycle():
+def test_the_spa_fallback_never_answers_for_the_api(tmp_path, monkeypatch):
+    """A single-origin deployment serves the designer from a catch-all route.
+    It is registered last, so an unknown /api path would otherwise come back as
+    the index page with a 200 — a mistyped endpoint that looks like it worked,
+    and a health check that passes without the route existing."""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<div id=root></div>", encoding="utf-8")
+    monkeypatch.setenv("PROCESS_ENGINE_DESIGNER_DIST", str(dist))
+    client = make_client()
+
+    assert client.get("/app/settings").status_code == 200  # a client-side route
+    assert client.get("/api/health").json() == {"status": "ok"}  # a real route
+    missing = client.get("/api/not-a-route")
+    assert missing.status_code == 404
+    assert missing.headers["content-type"].startswith("application/json")
+
+
+def test_full_lifecycle(engine_host):
     client = make_client()
 
     created = client.post("/api/processes", json=DEFINITION).json()
@@ -87,14 +103,14 @@ def test_full_lifecycle():
     assert client.post(f"/api/processes/{process_id}/run", json={}).status_code == 409
 
     # but the draft runs
-    draft_run = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+    draft_run = engine_host.run(client, process_id, draft=True)
     assert draft_run["status"] == "succeeded"
 
     published = client.post(f"/api/processes/{process_id}/publish").json()
     assert published["version"] == 1
     assert published["status"] == "published"
 
-    run = client.post(f"/api/processes/{process_id}/run", json={}).json()
+    run = engine_host.run(client, process_id)
     assert run["status"] == "succeeded"
     assert run["process_version"] == 1
 
@@ -103,6 +119,24 @@ def test_full_lifecycle():
 
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["step_runs"][1]["outputs"]["main"] == {"msg": "hi"}
+
+
+def test_a_run_is_queued_not_executed_here():
+    """The reply to Run is a PENDING instance, not a finished one.
+
+    Nothing executes in this process, so the run exists as a row the moment it
+    is asked for and stays PENDING until an engine host claims it. The designer
+    needs no special case for that: it polls whatever it gets back.
+    """
+    client = make_client()
+    process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
+
+    queued = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+    assert queued["status"] == "pending"
+    assert queued["step_runs"] == []
+    # visible in the run list straight away, so a queued run is never invisible
+    assert [entry["id"] for entry in client.get(f"/api/processes/{process_id}/runs").json()] == [queued["id"]]
+    assert client.get("/api/queue").json() == {"mode": "database", "workers_online": 0, "queued": 1}
 
 
 def test_validation_endpoint_reports_issues_with_step_ids():
@@ -120,7 +154,7 @@ def test_validation_endpoint_reports_issues_with_step_ids():
     assert client.post(f"/api/processes/{process_id}/publish").status_code == 422
 
 
-def test_webhook_fires_published_process_without_bearer_token():
+def test_webhook_fires_published_process_without_bearer_token(engine_host):
     with make_client() as client:
         definition = {**DEFINITION, "triggers": [{"type": "webhook", "path": "hooky"}]}
         process_id = client.post("/api/processes", json=definition).json()["id"]
@@ -133,7 +167,8 @@ def test_webhook_fires_published_process_without_bearer_token():
         accepted = response.json()
         assert accepted["process_id"] == process_id
 
-        run = wait_for_terminal(client, accepted["run_id"])
+        engine_host.drain(client)
+        run = client.get(f"/api/runs/{accepted['run_id']}").json()
         assert run["status"] == "succeeded"
         assert run["trigger_input"] == {"total": 9}
 
@@ -141,17 +176,19 @@ def test_webhook_fires_published_process_without_bearer_token():
         assert client.post("/api/hooks/nope", json={}).status_code == 404
 
 
-def test_background_run_and_polling():
+def test_the_background_flag_is_accepted_and_makes_no_difference(engine_host):
+    """Every run is queued now, so an older client asking for a background one
+    gets the same answer as everybody else rather than a 422."""
     with make_client() as client:
         process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
         accepted = client.post(f"/api/processes/{process_id}/run",
                                json={"draft": True, "background": True}).json()
-        assert accepted["background"] is True
-        run = wait_for_terminal(client, accepted["id"])
-        assert run["status"] == "succeeded"
+        assert accepted["status"] == "pending"
+        engine_host.drain(client)
+        assert client.get(f"/api/runs/{accepted['id']}").json()["status"] == "succeeded"
 
 
-def test_secrets_are_write_only_and_usable_in_runs():
+def test_secrets_are_write_only_and_usable_in_runs(engine_host):
     client = make_client()
     assert client.put("/api/secrets/api_key", json={"value": "s3cr3t"}).status_code == 200
     assert client.get("/api/secrets").json() == ["api_key"]
@@ -163,7 +200,7 @@ def test_secrets_are_write_only_and_usable_in_runs():
         "connections": [],
     }
     process_id = client.post("/api/processes", json=definition).json()["id"]
-    run = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+    run = engine_host.run(client, process_id, draft=True)
     assert run["status"] == "succeeded"
     assert run["step_runs"][0]["outputs"]["main"] == {"key": "s3cr3t"}
 
@@ -171,14 +208,14 @@ def test_secrets_are_write_only_and_usable_in_runs():
     assert client.get("/api/secrets").json() == []
 
 
-def test_run_control_endpoints_reject_bad_states():
+def test_run_control_endpoints_reject_bad_states(engine_host):
     client = make_client()
     # a run id nobody can produce is simply not found, whatever the verb
     assert client.post("/api/runs/nonexistent/cancel").status_code == 404
     assert client.post("/api/runs/nonexistent/pause").status_code == 404
 
     process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
-    run = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+    run = engine_host.run(client, process_id, draft=True)
     # a finished run cannot be resumed, and is no longer active to pause
     assert client.post(f"/api/runs/{run['id']}/resume").status_code == 409
     assert client.post(f"/api/runs/{run['id']}/pause").status_code == 409

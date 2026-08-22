@@ -11,9 +11,9 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-from process_engine.api import create_app
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database, iso_utc
+from process_engine_api import create_app
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database, iso_utc
 
 TOKEN = "test-token"
 
@@ -25,9 +25,9 @@ DEFINITION = {
 
 
 def make_client() -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
-    client = TestClient(create_app(db=Database("sqlite://"), registry=registry, auth_token=TOKEN))
+    db = Database("sqlite://")
+    client = TestClient(create_app(db=db, registry=spec_registry(), auth_token=TOKEN))
+    client.db = db  # what the engine_host fixture claims this test's jobs from
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -61,10 +61,10 @@ def test_process_list_updated_at_carries_offset():
     assert_recent(entry["updated_at"], "processes[].updated_at")
 
 
-def test_run_list_carries_offset_and_enough_to_show_a_duration():
+def test_run_list_carries_offset_and_enough_to_show_a_duration(engine_host):
     client = make_client()
     process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
-    client.post(f"/api/processes/{process_id}/run", json={"draft": True})
+    engine_host.run(client, process_id, draft=True)
 
     run = client.get(f"/api/processes/{process_id}/runs").json()[0]
     assert_recent(run["created_at"], "runs[].created_at")
@@ -83,10 +83,10 @@ def test_user_list_created_at_carries_offset():
     assert_recent(bob["created_at"], "users[].created_at")
 
 
-def test_run_document_and_step_input_carry_offset():
+def test_run_document_and_step_input_carry_offset(engine_host):
     client = make_client()
     process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
-    run_id = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()["id"]
+    run_id = engine_host.run(client, process_id, draft=True)["id"]
 
     detail = client.get(f"/api/runs/{run_id}").json()
     assert_recent(detail["started_at"], "run.started_at")

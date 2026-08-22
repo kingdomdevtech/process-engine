@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from process_engine import workspace
+from process_engine_core import workspace
 from process_engine.engine import Engine
-from process_engine.models import Connection, ProcessDefinition, RunStatus, Step
-from process_engine.plugin import PluginContext
+from process_engine_core.models import Connection, ProcessDefinition, RunStatus, Step
+from process_engine_core.plugin import PluginContext
 from process_engine.plugins.azure_blob_download import AzureBlobDownloadPlugin, _account_url
 from process_engine.plugins.file_purge import FilePurgePlugin
 from process_engine.plugins.s3_download import S3DownloadPlugin
-from process_engine.registry import PluginRegistry
+from process_engine.registry import default_registry
 
 DAY = 86_400
 
@@ -575,8 +575,7 @@ async def test_purge_runs_in_a_process_with_expressions(work_dir):
         ],
         connections=[Connection(source="policy", target="purge")],
     )
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     instance = await Engine(registry).run(definition)
 
     assert instance.status == RunStatus.SUCCEEDED
@@ -589,7 +588,6 @@ async def test_purge_runs_in_a_process_with_expressions(work_dir):
 
 
 def test_the_file_plugins_are_built_in():
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     keys = {manifest["key"] for manifest in registry.manifests()}
     assert {"s3_download", "azure_blob_download", "file_purge"} <= keys

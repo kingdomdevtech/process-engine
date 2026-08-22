@@ -1,0 +1,28 @@
+# Keep the build context small, and keep local state out of the image — the
+# generated auth token and Fernet key especially: baking them in would ship one
+# installation's credentials to every container built from it.
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+**/*.egg-info
+build
+dist
+
+designer/node_modules
+designer/dist
+
+# local state
+.process_engine_auth
+.process_engine_key
+*.db
+workdir/
+tests/
+examples/
+
+.claude
+.github
+docker-compose.yml
+Dockerfile

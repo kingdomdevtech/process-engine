@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "process-engine-api"
+version = "0.1.0"
+description = "Process Engine API: the designer's backend — authors and queues work, executes nothing"
+requires-python = ">=3.11"
+# Deliberately *not* dependent on process-engine: this tier holds no plugin
+# implementation and no engine, which is what makes "the container cannot run a
+# step" a property of the install rather than a promise. Work goes to engine
+# hosts through the database.
+dependencies = [
+    "process-engine-core==0.1.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",  # the OIDC token exchange in sso.py
+]
+
+[project.optional-dependencies]
+# Only for Settings → "Send test email" against an Amazon SES relay; run
+# notifications are sent by the engine host that ran the process, so an
+# installation using SMTP never needs this.
+aws = [
+    "boto3>=1.34",
+]
+
+[project.scripts]
+process-engine-api = "process_engine_api.__main__:main"
+
+[tool.setuptools]
+packages = ["process_engine_api"]
+package-dir = { "process_engine_api" = "." }

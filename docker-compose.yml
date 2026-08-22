@@ -1,11 +1,39 @@
-# MySQL backend for process/step definitions and run history.
+# Local stack: MySQL, and the designer container in front of it.
 #
-#   docker compose up -d mysql
-#   $env:PROCESS_ENGINE_DB_URL = "mysql+pymysql://process_engine:process_engine@127.0.0.1:3306/process_engine"
-#   python -m process_engine
+#   docker compose up -d mysql       # database only, for a `pip install` checkout
+#   docker compose up -d --build     # the whole thing -> http://127.0.0.1:8000
 #
-# Without PROCESS_ENGINE_DB_URL the engine falls back to local SQLite.
+# The `designer` service is the Linux half of the deployment: the UI and its API,
+# one origin, executing nothing. Nothing runs until you start an engine —
+# `python -m process_engine` on the Windows host, against the same database —
+# and it then claims every run and every preview.
+#
+# Without PROCESS_ENGINE_DB_URL both tiers fall back to local SQLite — which is
+# per-process, so a two-host split needs a real server here.
 services:
+  designer:
+    build: .
+    container_name: process-engine-designer
+    ports:
+      - "8000:8080"   # 8080 inside: an unprivileged port, so no root
+    environment:
+      PROCESS_ENGINE_DB_URL: mysql+pymysql://process_engine:process_engine@mysql:3306/process_engine
+      # This is where the browser reaches it, so it is both the OIDC callback
+      # origin and where SSO and run links land — one value, one origin.
+      PROCESS_ENGINE_PUBLIC_URL: http://127.0.0.1:8000
+      PROCESS_ENGINE_DESIGNER_URL: http://127.0.0.1:8000
+      # Set this to the same value on the Windows engine, or it cannot decrypt
+      # the secrets your steps reference. Generated into the volume if unset.
+      #PROCESS_ENGINE_SECRET_KEY: CHANGE_ME_shared_fernet_key
+    volumes:
+      # the SQLite fallback, the generated auth token and the Fernet key. Losing
+      # the key makes every stored secret unreadable, so keep the volume.
+      - designer_data:/data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.4
     container_name: process-engine-mysql
@@ -26,3 +54,4 @@ services:
 
 volumes:
   mysql_data:
+  designer_data:

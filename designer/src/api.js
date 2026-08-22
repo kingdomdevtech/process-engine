@@ -1,5 +1,15 @@
 let token = localStorage.getItem('pe_token') || ''
 
+/* Where the engine lives. Empty means same origin (the dev proxy, or a
+   single-origin build served by the engine itself); set VITE_API_BASE at
+   build time to point a separately deployed designer at the engine. */
+export const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+
+/** Absolute engine URL for a root-relative path (`/api/...`, `/help/...`). */
+export function engineUrl(path) {
+  return `${API_BASE}${path}`
+}
+
 export function setToken(value) {
   token = value
   if (value) localStorage.setItem('pe_token', value)
@@ -36,7 +46,7 @@ async function request(path, options = {}) {
     body = JSON.stringify(options.body)
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  const response = await fetch(path, { method: options.method || 'GET', headers, body })
+  const response = await fetch(engineUrl(path), { method: options.method || 'GET', headers, body })
   const data = await response.json().catch(() => null)
   if (!response.ok) {
     const detail = data?.detail

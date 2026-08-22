@@ -32,12 +32,16 @@ jobs:
           python-version: "3.11" # the project's floor; catches 3.12-only syntax
           cache: pip
 
-      # `excel` is deliberately absent: pywin32 is Windows-only, so the Excel
-      # plugin cannot be exercised here. Everything else installs cleanly on Linux.
-      - name: Install the package and its test dependencies
+      # All three distributions, editable, as a contributor installs them.
+      # `excel` is listed but resolves to nothing here — pywin32 carries a
+      # `sys_platform == 'win32'` marker — so the Excel plugin imports but cannot
+      # be exercised on this runner. Everything else installs cleanly on Linux.
+      - name: Install the packages and their test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,mysql,aws,azure]"
+          pip install -r requirements-dev.txt
+          # the optional SDKs too, so the S3/SES/Azure plugins are importable here
+          pip install -e "packages/process_engine[excel,mysql,aws,azure]"
 
       - name: Install the example entry-point plugin
         run: pip install -e examples/hello-plugin

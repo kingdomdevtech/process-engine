@@ -7,13 +7,14 @@ import asyncio
 import logging
 
 from process_engine.engine import Engine
-from process_engine.models import Connection, ProcessDefinition, Step
-from process_engine.registry import PluginRegistry
+from process_engine.registry import default_registry
+from process_engine_core.models import Connection, ProcessDefinition, Step
 
 
 async def main() -> None:
-    registry = PluginRegistry()
-    registry.load_builtins()
+    # default_registry() is what an engine host builds: the plugins that can run,
+    # not the specs the designer's API draws its palette from
+    registry = default_registry()
 
     definition = ProcessDefinition(
         name="Order triage",

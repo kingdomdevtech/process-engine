@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { AlertTriangle, Check, Clock, Copy, Link2, Plus, Trash2, Webhook } from 'lucide-react'
+import { API_BASE } from '../api.js'
 import { relativeTime, shortId } from '../format.js'
 import { useToast } from './Toast.jsx'
 import StatusBadge from './ui/StatusBadge.jsx'
@@ -176,7 +177,9 @@ export default function TriggersPanel({
                     aria-label="Copy webhook URL"
                     onClick={() => {
                       navigator.clipboard
-                        ?.writeText(`${window.location.origin}/api/hooks/${trigger.path || processId || ''}`)
+                        ?.writeText(
+                          `${API_BASE || window.location.origin}/api/hooks/${trigger.path || processId || ''}`,
+                        )
                         .then(() => toast.ok('Webhook URL copied'))
                         .catch(() => toast.error('Could not copy to the clipboard'))
                     }}

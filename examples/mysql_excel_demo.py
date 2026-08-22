@@ -35,7 +35,7 @@ Environment (all optional):
     DEMO_WORKBOOK           workbook to refresh; defaults to
                             <cwd>\\workdir\\demo-orders.xlsx
     PROCESS_ENGINE_DB_URL   where the processes are stored — run this from the
-                            same directory (and env) as ``python -m process_engine``
+                            same directory (and env) as ``python -m process_engine_api``
                             so the API sees them
 
 The MySQL password is stored as the secret ``demo_mysql_password`` and the
@@ -53,16 +53,16 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from process_engine.engine import Engine
-from process_engine.models import (
+from process_engine_core.models import (
     Connection,
     ProcessDefinition,
     RetryPolicy,
     Step,
     Trigger,
 )
-from process_engine.registry import PluginRegistry
-from process_engine.secrets_store import SecretsManager
-from process_engine.storage import Database
+from process_engine.registry import default_registry
+from process_engine_core.secrets_store import SecretsManager
+from process_engine_core.storage import Database
 
 DEFAULT_MYSQL_URL = "mysql+pymysql://process_engine:process_engine@127.0.0.1:3306/process_engine"
 SECRET_NAME = "demo_mysql_password"
@@ -405,8 +405,7 @@ def upsert_published(db: Database, definition: ProcessDefinition) -> ProcessDefi
 
 
 async def run_once(db: Database, process_id: str) -> None:
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     engine = Engine(
         registry,
         definition_resolver=db.get_version,
@@ -446,8 +445,10 @@ def main() -> None:
     print(
         f"""
 Next steps:
-  1. python -m process_engine        (from this same directory/env)
+  1. python -m process_engine_api          (from this same directory/env)
   2. Open the designer -> Demos -> "{parent.name}" and press Run.
+     The Excel step needs Windows: on a split deployment the run has to be
+     claimed by a Windows engine (python -m process_engine), not by a Linux API.
   3. Workbook: --make-workbook builds one at
        {workbook}
      with a live ODBC connection to demo_orders when a MySQL ODBC driver is

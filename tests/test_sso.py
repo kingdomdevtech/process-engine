@@ -1,19 +1,19 @@
-from urllib.parse import parse_qs, urlparse
+﻿from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
-import process_engine.sso
-from process_engine.api import create_app
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+import process_engine_api.sso
+from process_engine_api import create_app
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database
 
 TOKEN = "master-token"
 
 
 def make_client() -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
-    client = TestClient(create_app(db=Database("sqlite://"), registry=registry, auth_token=TOKEN))
+    db = Database("sqlite://")
+    client = TestClient(create_app(db=db, registry=spec_registry(), auth_token=TOKEN))
+    client.db = db  # what the engine_host fixture claims this test's jobs from
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -26,7 +26,7 @@ def configure_google(monkeypatch):
         assert provider.key == "google" and code == "auth-code"
         return "sso.user@example.com"
 
-    monkeypatch.setattr(process_engine.sso, "fetch_user_email", fake_fetch)
+    monkeypatch.setattr(process_engine_api.sso, "fetch_user_email", fake_fetch)
 
 
 def fragment_of(response) -> dict[str, list[str]]:

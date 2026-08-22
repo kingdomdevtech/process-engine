@@ -3,10 +3,10 @@ import logging
 import pytest
 
 from process_engine.engine import Engine
-from process_engine.models import Connection, ProcessDefinition, RunStatus, Step
-from process_engine.plugin import PluginContext
+from process_engine_core.models import Connection, ProcessDefinition, RunStatus, Step
+from process_engine_core.plugin import PluginContext
 from process_engine.plugins.html_table import HtmlTablePlugin
-from process_engine.registry import PluginRegistry
+from process_engine.registry import default_registry
 
 ROWS = [
     {"id": 1, "customer": "Acme", "total": 120.5},
@@ -133,8 +133,7 @@ async def test_runs_in_a_process_with_an_expression():
         ],
         connections=[Connection(source="load", target="table")],
     )
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     instance = await Engine(registry).run(definition, trigger_input={"rows": ROWS})
 
     assert instance.status == RunStatus.SUCCEEDED

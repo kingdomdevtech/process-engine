@@ -585,13 +585,17 @@ function EditorInner() {
         setRunView(run)
         setSelectedId(null) // reveal the run timeline in the inspector
         refreshRuns(id)
-        if (run.status === 'succeeded') toast.ok('Run succeeded')
+        // The API answers with the finished run when it executed it. Where the
+        // engine's work lives on remote workers it answers with a queued one
+        // instead, so watch it the same way a resumed run is watched.
+        if (!TERMINAL.has(run.status)) pollRun(run.id)
+        else if (run.status === 'succeeded') toast.ok('Run succeeded')
         else if (run.status === 'failed') toast.error(run.error || 'Run failed')
       }
     } finally {
       setRunning(false)
     }
-  }, [save, triggerInput, guard, refreshRuns, toast])
+  }, [save, triggerInput, guard, refreshRuns, toast, pollRun])
 
   const viewRun = useCallback(
     (id) => guard(() => api.get(`/api/runs/${id}`)).then((run) => run && setRunView(run)),

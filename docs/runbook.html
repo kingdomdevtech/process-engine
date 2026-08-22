@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Engine — Operations Runbook</title>
+<style>
+  /* Values mirror the designer's palette (designer/src/styles.css) so the
+     runbook looks like the product it documents. */
+  :root {
+    --ink: #151b25; --muted: #4e5662; --line: #d6d9de;
+    --accent: #1468bf; --bg-soft: #f3f5f8; --code-bg: #e6eaef;
+    --ok: #137d41; --warn: #955e00; --bad: #bc272c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: #fff;
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 96px; }
+  header.doc { border-bottom: 3px solid var(--accent); padding-bottom: 16px; margin-bottom: 24px; }
+  header.doc h1 { margin: 0 0 4px; font-size: 30px; }
+  header.doc p { margin: 0; color: var(--muted); }
+  nav.toc {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 32px;
+  }
+  nav.toc strong { display: block; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 40px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  code, pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 13px; background: var(--code-bg); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .callout { border-left: 4px solid var(--accent); background: var(--bg-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .checklist li { margin-bottom: 4px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  kbd {
+    display: inline-block; min-width: 20px; padding: 1px 6px; margin: 0 1px;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--bg-soft); font: 600 11px/1.6 Consolas, monospace; color: var(--muted);
+  }
+  ol.do { counter-reset: doitem; list-style: none; padding-left: 0; margin: 14px 0; }
+  ol.do > li {
+    counter-increment: doitem; position: relative;
+    padding: 0 0 12px 38px; border-left: 2px solid var(--line); margin-left: 12px;
+  }
+  ol.do > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.do > li::before {
+    content: counter(doitem); position: absolute; left: -13px; top: 0;
+    width: 24px; height: 24px; border-radius: 999px; background: var(--accent); color: #fff;
+    font: 700 12px/24px Consolas, monospace; text-align: center;
+  }
+  .lead { font-size: 16px; color: var(--muted); }
+  .chapter { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 -6px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill-ok { background: #e2f6e6; color: var(--ok); }
+  .pill-bad { background: #ffebe9; color: var(--bad); }
+  .pill-skip { background: #e6eaef; color: var(--muted); }
+  .pill-run { background: #e2f6ff; color: #027291; }
+  .diagram {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px; overflow-x: auto; font: 12px/1.45 Consolas, monospace; color: var(--ink);
+    white-space: pre; margin: 16px 0;
+  }
+  @media print { nav.toc ol { columns: 1; } .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Process Engine — Operations Runbook</h1>
+  <p>Deploying, configuring and keeping it running &nbsp;·&nbsp; v0.1.0 &nbsp;·&nbsp; last updated 2026-08-22</p>
+</header>
+
+<p class="lead">This is the document for whoever runs the installation, rather than whoever
+builds processes in it. It covers the shapes it can be deployed in, every environment
+variable, the state that must be backed up, the Windows/Excel constraints, mail, and what to do
+when something stops. The end-user walkthrough is
+<a href="guided-tour.html">guided-tour.html</a>; <a href="architecture.html">architecture.html</a>
+draws the moving parts.</p>
+
+<div class="callout">
+  <strong>One rule underlies everything here.</strong> There are two programs, and you always run
+  both: <code>process_engine_api</code> serves the interface and the HTTP API and
+  <strong>executes nothing</strong>; <code>process_engine</code> executes processes and serves no
+  HTTP at all. The shared database is the only channel between them. Every decision below follows
+  from that.
+</div>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#shapes">The two deployment shapes</a></li>
+    <li><a href="#single">One host</a></li>
+    <li><a href="#container">The container</a></li>
+    <li><a href="#split">Linux designer + Windows engine</a></li>
+    <li><a href="#env">Environment variables</a></li>
+    <li><a href="#state">State, files and backups</a></li>
+    <li><a href="#flow">How work reaches an engine</a></li>
+    <li><a href="#windows">Windows, Excel and COM</a></li>
+    <li><a href="#mail">Mail: notifications and steps</a></li>
+    <li><a href="#security">Secrets, the sandbox, users, SSO</a></li>
+    <li><a href="#plugins">The plugin inventory</a></li>
+    <li><a href="#monitor">Monitoring and logs</a></li>
+    <li><a href="#upgrade">Upgrades and rollback</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+  </ol>
+</nav>
+
+<p class="chapter">Chapter 1</p>
+<h2 id="shapes">1. The two deployment shapes</h2>
+
+<p>There is only one execution model, and it is not a mode to switch on. The API writes every
+run and every single-step preview to a queue in the database, and an engine claims it. What
+varies is whether the engines sit on the same machine as the API or somewhere else — and
+nothing about a process definition changes between the two, so you can move from one to the
+other without touching anyone's work.</p>
+
+<table>
+  <tr><th>Shape</th><th>What runs</th><th>Use it when</th></tr>
+  <tr>
+    <td><strong>One host</strong></td>
+    <td><code>process_engine_api</code> serving the UI, plus one or more
+        <code>process_engine</code> processes beside it. Same machine, same database, still two
+        programs.</td>
+    <td>Evaluation, a team on one server, no Windows-only steps — or all-Windows anyway.</td>
+  </tr>
+  <tr>
+    <td><strong>Two hosts</strong></td>
+    <td>The API in a Linux container that <em>cannot</em> execute anything, and engines on other
+        machines that claim the work and own cron.</td>
+    <td>Steps that need a different OS than the API (Excel/COM on Windows), or more execution
+        capacity than one host.</td>
+  </tr>
+</table>
+
+<div class="callout warn">
+  <strong>Nothing runs until an engine is running.</strong> The API host holds no engine — its
+  install contains no plugin implementation to call — so with no <code>python -m
+  process_engine</code> anywhere, a run sits at <em>pending</em> for ever and <em>Test this
+  step</em> reports that nothing is listening. Add engine capacity by starting more of them: one
+  process per concurrent run.
+</div>
+
+<div class="callout warn">
+  <strong>Two hosts requires a shared MySQL or Postgres.</strong> SQLite is a file opened by one
+  process; two machines cannot coordinate through it. If <code>PROCESS_ENGINE_DB_URL</code> is
+  unset, each tier quietly gets its own SQLite database and neither ever sees the other's work.
+  On one host, SQLite is adequate but a real server is still the better choice under load.
+</div>
+
+<p class="chapter">Chapter 2</p>
+<h2 id="single">2. One host</h2>
+
+<p>Two programs, one machine. Install the API's half and the engine's half — they are separate
+distributions, and the engine's is the one that carries the plugin implementations and their
+SDKs:</p>
+
+<pre><code>python -m venv .venv
+.\.venv\Scripts\Activate.ps1                 # Linux: source .venv/bin/activate
+pip install "./packages/process_engine_core[mysql]" \
+            "./packages/process_engine[mysql]" \
+            ./packages/process_engine_api     # add ,excel on Windows for excel_refresh
+
+cd designer; npm ci; npm run build; cd ..    # so the API can serve the UI itself
+python -m process_engine_api                 # http://127.0.0.1:8000
+python -m process_engine                     # a second process — nothing runs without it</code></pre>
+
+<p><code>python -m process_engine_api</code> binds <code>127.0.0.1</code> deliberately — it is the
+local-use entry point. For a real service, bind explicitly and put it behind whatever terminates
+TLS:</p>
+
+<pre><code>uvicorn "process_engine_api:create_app" --factory --host 0.0.0.0 --port 8000</code></pre>
+
+<p>Both forms serve the built designer from <code>designer/dist</code> when it is present
+(<code>PROCESS_ENGINE_DESIGNER_DIST</code> moves it), and the handbooks from <code>docs/</code> at
+<code>/help</code>. <code>/docs</code> is the OpenAPI reference — a different thing.</p>
+
+<h3>systemd units</h3>
+<p>Two, because there are two programs. The API:</p>
+
+<pre><code>[Unit]
+Description=Process Engine — designer and API
+After=network-online.target
+
+[Service]
+User=process-engine
+WorkingDirectory=/opt/process-engine
+EnvironmentFile=/etc/process-engine/linux-api.env
+ExecStart=/opt/process-engine/.venv/bin/uvicorn "process_engine_api:create_app" \
+          --factory --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<p>And an engine, templated so <code>systemctl enable --now process-engine-worker@{1,2,3}</code>
+gives you three concurrent runs:</p>
+
+<pre><code>[Unit]
+Description=Process Engine — engine %i
+After=network-online.target
+
+[Service]
+User=process-engine
+WorkingDirectory=/opt/process-engine
+EnvironmentFile=/etc/process-engine/linux-api.env
+ExecStart=/opt/process-engine/.venv/bin/python -m process_engine
+Restart=always
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<p><code>deploy/linux-api.env.example</code> in the repository is a commented starting point for
+that <code>EnvironmentFile</code>.</p>
+
+<p class="chapter">Chapter 3</p>
+<h2 id="container">3. The container</h2>
+
+<p>The repository's <code>Dockerfile</code> builds the Linux half as one image: nginx serves the
+built designer and proxies <code>/api</code> to uvicorn on loopback, both under supervisord. The
+browser therefore only ever talks to one origin — no CORS, and no
+<code>VITE_API_BASE</code> to keep in step.</p>
+
+<pre><code>docker build -t process-engine .
+docker run -d --name process-engine \
+  -p 8000:8080 \
+  -v process-engine-data:/data \
+  -e PROCESS_ENGINE_DB_URL=mysql+pymysql://process_engine:...@db:3306/process_engine \
+  -e PROCESS_ENGINE_SECRET_KEY=... \
+  -e PROCESS_ENGINE_PUBLIC_URL=https://engine.example.com \
+  -e PROCESS_ENGINE_DESIGNER_URL=https://engine.example.com \
+  process-engine</code></pre>
+
+<p><code>docker compose up -d --build</code> brings the same image up with a MySQL beside it.</p>
+
+<table>
+  <tr><th>Detail</th><th>Why</th></tr>
+  <tr><td>Listens on <strong>8080</strong>, runs as uid <strong>10001</strong></td><td>An unprivileged port so the container needs no root. Publish it wherever you like.</td></tr>
+  <tr><td><code>/data</code> is a volume</td><td>Holds the SQLite fallback database and the generated <code>.process_engine_auth</code> / <code>.process_engine_key</code>. Without it the Fernet key is regenerated on every restart and every stored secret becomes unreadable.</td></tr>
+  <tr><td><code>HEALTHCHECK</code> polls <code>/api/health</code></td><td>Unauthenticated liveness. <code>docker inspect --format '{{.State.Health.Status}}'</code> reports it.</td></tr>
+  <tr><td>No engine installed at all</td><td>The image takes <code>process_engine_core[mysql]</code> and <code>process_engine_api</code>, never <code>process-engine</code>. <code>docker exec … python -c "import process_engine"</code> raises <code>ModuleNotFoundError</code>, which is the design: "the container executes nothing" is a fact about the install rather than a setting that could be got wrong.</td></tr>
+  <tr><td>supervisord stops the container if either process dies for good</td><td>A page served without its API is broken, not degraded. Better to fail the health check and let the orchestrator restart it.</td></tr>
+</table>
+
+<div class="callout">
+  <strong>The build context excludes credentials on purpose</strong>
+  (<code>.dockerignore</code>: <code>.process_engine_auth</code>, <code>.process_engine_key</code>,
+  <code>*.db</code>, <code>workdir/</code>). Baking them in would ship one installation's secrets
+  to every container built from the image. Pass them as environment variables.
+</div>
+
+<p class="chapter">Chapter 4</p>
+<h2 id="split">4. Linux designer + Windows engine</h2>
+
+<p>This is the shape the queue exists for: the interface on Linux, and the Excel/COM work where
+Excel actually is.</p>
+
+<p>The engine connects to the <strong>database directly</strong> and needs no network path to the
+API at all — not for jobs, not for the definitions <code>for_each</code> runs, not for secrets.
+So the firewall rule you need is engine → database, and nothing else. The API can be down for an
+hour and schedules keep firing.</p>
+
+<div class="diagram">  Linux container                                  Windows host
+  ┌────────────────────────────┐                   ┌────────────────────────────┐
+  │ nginx :8080                │                   │ python -m process_engine   │
+  │  ├── the built designer    │                   │  · claims jobs             │
+  │  └── /api → uvicorn        │                   │  · runs the engine         │
+  │            process_engine_api                  │  · fires cron              │
+  │                            │                   │  · sends run email         │
+  │  core + api installed      │                   │  · Excel / COM / pywin32   │
+  │  no engine → executes      │                   │  core + engine installed   │
+  │  NOTHING                   │                   │  no web stack at all       │
+  └─────────────┬──────────────┘                   └─────────────┬──────────────┘
+                │                                                │
+                └──────────────►  MySQL / Postgres  ◄────────────┘
+                                 the only channel
+                       job_queue · run_signals · schedule_state · workers</div>
+
+<h3>On the Linux side</h3>
+<ol class="do">
+  <li>Deploy the container, or a plain service installed with
+      <code>pip install "./packages/process_engine_core[mysql]" ./packages/process_engine_api</code>.
+      Do <strong>not</strong> install <code>process-engine</code> here: leaving it out is what
+      guarantees no step ever executes on this host.</li>
+  <li>Set <code>PROCESS_ENGINE_DB_URL</code> to the shared server — <em>not</em> SQLite.</li>
+  <li>Set <code>PROCESS_ENGINE_SECRET_KEY</code> and <code>PROCESS_ENGINE_AUTH_TOKEN</code>
+      explicitly. Generated files are for development.</li>
+  <li>Set <code>PROCESS_ENGINE_PUBLIC_URL</code> (this API's own origin, and the OIDC callback you
+      register with the identity provider) and <code>PROCESS_ENGINE_DESIGNER_URL</code> (where a
+      browser lands after SSO). One value when this host serves the designer too, which is the
+      normal case.</li>
+</ol>
+
+<h3>On the Windows side</h3>
+<ol class="do">
+  <li><code>pip install ./packages/process_engine_core "./packages/process_engine[excel,mysql]"</code>.
+      Add <code>,aws</code> or <code>,azure</code> if your processes use the SES, S3 or Azure blob
+      steps. Not the API package — there is no web stack out here, by design.</li>
+  <li>Set the <strong>same</strong> <code>PROCESS_ENGINE_SECRET_KEY</code>, byte for byte. It
+      decrypts the secrets your steps reference and the stored mail-relay password; a mismatch
+      fails every step that uses one.</li>
+  <li>Set <code>PROCESS_ENGINE_DB_URL</code> to the same database, and
+      <code>PROCESS_ENGINE_WORK_DIR</code> to the sandbox root for file steps.</li>
+  <li>Set <code>PROCESS_ENGINE_DESIGNER_URL</code> to the designer's origin — <em>this</em> host
+      sends the run-notification email, so it is what makes “Open the run” resolve.</li>
+  <li><code>python -m process_engine</code>. One process per concurrent run; run several if you
+      need concurrency. There is no flag to set — polling the queue is all it does.</li>
+</ol>
+
+<p><code>deploy/windows-worker.env.example</code> is the annotated variable list, and includes the
+PowerShell snippet for loading it (PowerShell does not read <code>.env</code> files).</p>
+
+<h3>Running the engine as a Windows service</h3>
+<p>Any service supervisor works — NSSM, <code>sc.exe</code> wrapping a launcher, or a Scheduled
+Task set to <em>Run whether user is logged on or not</em> with <em>Restart on failure</em>. One
+caveat dominates the choice: <strong>Excel COM in a non-interactive session needs DCOM
+configuration</strong> (see <a href="#windows">chapter 8</a>). If your processes refresh
+workbooks, start with a Scheduled Task running as a real user account that has logged in at least
+once, and confirm a refresh works there before hardening it further.</p>
+
+<div class="callout ok">
+  <strong>Verify the pair, not each half.</strong> With both running, open
+  <strong>Settings</strong> as an admin: the engine should appear under the workers list with a
+  recent heartbeat. Then run any process and watch it leave <em>pending</em>. If it never does,
+  the two are not on the same database.
+</div>
+
+<p class="chapter">Chapter 5</p>
+<h2 id="env">5. Environment variables</h2>
+
+<p>All configuration is environment variables. Nothing security-shaped is editable through the
+API — deliberately, so that signing in as an admin cannot widen what the engine may touch.</p>
+
+<h3>Both tiers</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>What it does</th></tr>
+  <tr><td><code>PROCESS_ENGINE_DB_URL</code></td><td>local SQLite</td><td>SQLAlchemy URL. <code>mysql+pymysql://…</code> or <code>postgresql+psycopg://…</code>. Required — and shared — for a split deployment.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_SECRET_KEY</code></td><td>generated into <code>.process_engine_key</code></td><td>Fernet key for stored secrets, mail credentials and SSO state. <strong>Identical on every host.</strong> Lose it and stored secrets are unrecoverable.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_WORK_DIR</code></td><td><code>./workdir</code></td><td>The filesystem sandbox root. Every path a step uses resolves inside it, after symlinks.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_DESIGNER_URL</code></td><td>= <code>PUBLIC_URL</code></td><td>Where a browser should land: SSO redirect target, and the “Open the run” link in notification email. Set it on the engine hosts too — they send that email.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_LOG_LEVEL</code></td><td><code>INFO</code></td><td>Root log level.</td></tr>
+</table>
+
+<h3>The API (<code>process_engine_api</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>What it does</th></tr>
+  <tr><td><code>PROCESS_ENGINE_AUTH_TOKEN</code></td><td>generated into <code>.process_engine_auth</code></td><td>Static admin bearer token: the bootstrap credential and the one to use for scripting. Treat it like a root password.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_PUBLIC_URL</code></td><td><code>http://localhost:5173</code></td><td>This API's own public origin. Register <code>{PUBLIC_URL}/api/auth/sso/&lt;provider&gt;/callback</code> with the identity provider.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_HOST</code> / <code>_PORT</code></td><td><code>127.0.0.1</code> / <code>8000</code></td><td>Bind address for <code>python -m process_engine_api</code>.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_DESIGNER_DIST</code></td><td><code>designer/dist</code></td><td>Built designer to serve. Unset in the container — nginx serves it instead.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_DOCS_DIR</code></td><td><code>docs</code></td><td>Handbooks to serve at <code>/help</code>.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_OIDC_GOOGLE_CLIENT_ID</code><br><code>…_GOOGLE_CLIENT_SECRET</code><br><code>…_ENTRA_CLIENT_ID</code><br><code>…_ENTRA_CLIENT_SECRET</code><br><code>…_ENTRA_TENANT</code></td><td>unset</td><td>Setting a provider's pair is what puts its button on the login page. Nothing else to switch on.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_SSO_AUTO_PROVISION</code></td><td><code>false</code></td><td>When false, an SSO email must already match a username. When true, a first successful login creates the account.</td></tr>
+</table>
+
+<h3>The engine (<code>process_engine</code>)</h3>
+<table>
+  <tr><th>Variable</th><th>Default</th><th>What it does</th></tr>
+  <tr><td><code>PROCESS_ENGINE_WORKER_SCHEDULER</code></td><td><code>true</code></td><td>Whether this engine also watches the schedules. Safe on every engine — a firing is claimed in the database, so several watchers still fire it once. Set <code>false</code> only to hand scheduling to something specific.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_QUEUE_POLL_SECONDS</code></td><td><code>2.0</code></td><td>How often an idle engine looks for work. Lower is more responsive and more database traffic.</td></tr>
+  <tr><td><code>PROCESS_ENGINE_STEP_WORKERS</code></td><td>thread-pool default</td><td>Threads per run for steps that execute in parallel. Only the engine runs steps, so this belongs here.</td></tr>
+</table>
+
+<p>The engine has no mode switch of its own: claiming from the database is the only thing it
+does. Concurrency is the number of engine processes you start, not a setting.</p>
+
+<p class="chapter">Chapter 6</p>
+<h2 id="state">6. State, files and backups</h2>
+
+<h3>The two credential files</h3>
+<table>
+  <tr><th>File</th><th>What it is</th><th>If you lose it</th></tr>
+  <tr><td><code>.process_engine_auth</code></td><td>The static admin API token, generated on first start when <code>PROCESS_ENGINE_AUTH_TOKEN</code> is unset.</td><td>Harmless: a new one is generated. Anything holding the old token has to be updated.</td></tr>
+  <tr><td><code>.process_engine_key</code></td><td>The Fernet key, generated when <code>PROCESS_ENGINE_SECRET_KEY</code> is unset.</td><td><strong>Every stored secret and the mail-relay password become unreadable.</strong> Processes keep their definitions; the credentials have to be re-entered.</td></tr>
+</table>
+
+<p>Both land in the working directory. That is fine for development and wrong for a deployment:
+set the two variables explicitly, keep them wherever you keep secrets, and both hosts then share
+them by configuration rather than by luck.</p>
+
+<h3>The database</h3>
+<p>Everything else lives in one database. Ten tables, all created automatically on start:</p>
+
+<table>
+  <tr><th>Table</th><th>Holds</th></tr>
+  <tr><td><code>processes</code></td><td>The editable draft of each process. One row per process.</td></tr>
+  <tr><td><code>process_versions</code></td><td>Immutable published snapshots. Triggers and runs use these, never the draft.</td></tr>
+  <tr><td><code>process_instances</code></td><td>Run history, including every step's input and output. The largest table by far.</td></tr>
+  <tr><td><code>secrets</code></td><td>Fernet-encrypted values. The API only ever exposes names.</td></tr>
+  <tr><td><code>users</code></td><td>Accounts, roles and password hashes.</td></tr>
+  <tr><td><code>settings</code></td><td>Admin-editable deployment settings — currently only the mail relay.</td></tr>
+  <tr><td><code>job_queue</code></td><td>Queued runs and previews, and a finished preview's answer waiting to be collected.</td></tr>
+  <tr><td><code>run_signals</code></td><td>Pause/cancel requests crossing a process or host boundary.</td></tr>
+  <tr><td><code>schedule_state</code></td><td>Each trigger's next due time — the thing engines claim to make a cron firing happen once.</td></tr>
+  <tr><td><code>workers</code></td><td>Engine heartbeats, so the interface can tell “queued” from “nothing is listening”.</td></tr>
+</table>
+
+<div class="callout">
+  <strong>What to back up.</strong> The database and the Fernet key, together — the key without the
+  database is useless and the database without the key has unreadable secrets. The last four
+  tables are live coordination state and are worth nothing in a restore; excluding them from a
+  logical dump makes it smaller and no less complete.
+</div>
+
+<h3>Run history grows</h3>
+<p><code>process_instances</code> stores each step's real input and output, which is what makes the
+run view and the ƒx picker useful — and what makes it grow fastest. There is no built-in retention
+policy yet; a periodic delete by <code>started_at</code> against the database is the current
+answer. Deleting a run affects nothing but history.</p>
+
+<h3>The working directory</h3>
+<p><code>PROCESS_ENGINE_WORK_DIR</code> is the only place file steps may read or write. It is
+process data, not configuration: back it up if the files matter to you, and keep it off a system
+drive root. The <code>file_purge</code> plugin exists so a process can tidy its own output.</p>
+
+<p class="chapter">Chapter 7</p>
+<h2 id="flow">7. How work reaches an engine</h2>
+
+<p>Worth understanding, because most operational surprises are one of these steps not
+happening.</p>
+
+<h3>A run</h3>
+<ol class="do">
+  <li>The API persists the run as <span class="pill pill-skip">pending</span> <em>before</em>
+      queueing it. So it is visible immediately, and a restart mid-queue re-dispatches it instead
+      of losing it.</li>
+  <li>An engine claims the row with a guarded <code>UPDATE</code> — the lock, and portable to
+      SQLite. Exactly one engine wins.</li>
+  <li>It runs the process, persisting the instance after every step, and keeps renewing its claim
+      so a slow run is not mistaken for a dead one.</li>
+  <li>If that engine dies, the claim lapses after its lease and another engine reclaims the run
+      and replays it from the persisted steps. Already-completed steps are replayed from recorded
+      output, not re-executed — but side effects are <strong>at-least-once</strong>, not exactly
+      once.</li>
+  <li>Pause and cancel are written to <code>run_signals</code>; the engine notices between steps.
+      A cancel that arrives before the job starts wins outright.</li>
+</ol>
+
+<h3>A single-step preview (“Test this step”)</h3>
+<p>The step has to execute where the plugins are installed, which is never the API's process, so
+the request cannot be answered inside the HTTP call. The API returns <strong>202</strong> and a
+poll URL; the engine
+runs the step and writes the answer into the job row; the designer polls until it settles and then
+collects it. To the person clicking the button it just takes a moment longer.</p>
+
+<p>Uncollected replies are swept periodically, so a closed browser tab leaves nothing behind.</p>
+
+<h3>Cron</h3>
+<p>Due times live in <code>schedule_state</code>. Each engine ticks, and firing means claiming
+the row by rolling its next due time forward — which is why running several engines does not
+produce several runs, and why the API starts no scheduler of its own: it could not run what one
+fired.</p>
+
+<p>A window nobody was running for is <strong>skipped, not owed</strong>: bring an engine up after
+a two-day outage and you get the next occurrence, not two days of catch-up runs. That is standard
+cron behaviour and almost always what you want.</p>
+
+<div class="callout warn">
+  <strong>Every run is a queued run, including the one behind the Run button.</strong> The
+  designer gets a <span class="pill pill-skip">pending</span> instance back and polls it. If
+  nothing is claiming jobs, it sits there — which is exactly what <code>/api/queue</code> exists
+  to explain.
+</div>
+
+<p class="chapter">Chapter 8</p>
+<h2 id="windows">8. Windows, Excel and COM</h2>
+
+<p><code>excel_refresh</code> drives desktop Excel through COM automation. It needs Windows,
+Excel installed, and <code>pip install "process-engine[excel]"</code> (pywin32) on the host that
+executes it. The constraints are Excel's, not the engine's:</p>
+
+<ul class="checklist">
+  <li><strong>An interactive session is the reliable configuration.</strong> Excel COM inside a
+      Windows service needs DCOM identity configuration and a
+      <code>C:\Windows\SysWOW64\config\systemprofile\Desktop</code> folder to exist; without them
+      instantiation fails with an opaque COM error. A Scheduled Task running as a real user
+      account is the path of least resistance.</li>
+  <li><strong>Do not refresh one workbook from two runs at once.</strong> Excel is not friendly
+      about it. Run more engine processes for throughput, but keep concurrent access to a given
+      workbook to one — a schedule that can overlap itself is the usual way this bites.</li>
+  <li><strong>Power Query credentials are per Windows user.</strong> A new workbook's first
+      refresh must be done by hand, in Excel, as the account the engine runs as: <em>Data →
+      Refresh All → Connect</em>. Power Query refuses credentials embedded in a connection string.
+      After that one grant, unattended refreshes work.</li>
+  <li><strong>A crashed refresh can leave an EXCEL.EXE behind.</strong> If refreshes start hanging,
+      look for orphaned Excel processes under the engine's account and end them.</li>
+  <li><strong>Set “Show the Excel window” to diagnose</strong>, and only to diagnose — the run
+      will want an interactive desktop to draw on.</li>
+</ul>
+
+<div class="callout bad">
+  <strong>A Windows-only step must be claimed by a Windows engine.</strong> Any engine will claim
+  any job — the queue does not know which host can run what. So do not start a Linux engine
+  against a database whose processes refresh workbooks: it will win the claim and the step will
+  fail there. Run engines only where every plugin your processes use is installed and workable.
+</div>
+
+<p><code>excel_refresh</code> and <code>send_email</code>'s attachments predate the filesystem
+sandbox and still accept unrestricted paths. That is a deliberate migration rather than an
+oversight — narrowing them would break saved definitions — so treat those two paths as trusted
+input and keep an eye on who can edit those steps.</p>
+
+<p class="chapter">Chapter 9</p>
+<h2 id="mail">9. Mail: notifications and steps</h2>
+
+<p>There are two independent mail paths, and conflating them is a common misconfiguration.</p>
+
+<table>
+  <tr><th>Aspect</th><th>Run notifications</th><th>The <code>send_email_*</code> plugins</th></tr>
+  <tr><td>What it is</td><td>The product reporting on itself: a run started, succeeded, failed.</td><td>A step doing work — sending a report to a customer.</td></tr>
+  <tr><td>Configured in</td><td><strong>Settings → Notifications</strong>, admin-only, one relay for the whole deployment.</td><td>The step's own config, per process.</td></tr>
+  <tr><td>Credentials</td><td>Encrypted in the <code>settings</code> table.</td><td><code>{{ secrets.name }}</code>, from the secrets page.</td></tr>
+</table>
+
+<p>They deliberately do not share a relay: one is infrastructure, the other is business output,
+and they usually want different senders and different reputations.</p>
+
+<h3>The notification relay</h3>
+<p>SMTP or Amazon SES. Both send the byte-identical message — SES goes out as raw MIME — so
+switching provider changes nothing a recipient sees. Blank SES keys fall through to the ambient
+boto3 credential chain, which is what you want on an EC2 instance role.</p>
+
+<p><em>Send test email</em> on that page reports the relay's own error text, verbatim. It is the
+fastest diagnostic you have; everything else about notification delivery is deliberately silent —
+a run is already over by the time its email fails, so a delivery failure is logged and dropped
+rather than allowed to affect the run.</p>
+
+<h3>Things worth knowing before someone reports a bug</h3>
+<ul class="checklist">
+  <li><strong>One email per run end.</strong> Subscribing to both “failed” and “finished” gets one
+      message, worded for what actually happened.</li>
+  <li><strong>Sub-process runs are silent.</strong> A <code>for_each</code> over 500 rows sends one
+      notification, not 501.</li>
+  <li><strong>A username that is not an email address is dropped</strong> from the recipient list
+      rather than handed to the relay. Local accounts named <code>admin</code> get nothing;
+      that is not a delivery failure.</li>
+  <li><strong>In a split deployment the engine sends the mail</strong>, so the relay must be
+      reachable from the Windows host — and <code>PROCESS_ENGINE_DESIGNER_URL</code> must be set
+      there or the “Open the run” link points at the wrong place.</li>
+</ul>
+
+<p class="chapter">Chapter 10</p>
+<h2 id="security">10. Secrets, the sandbox, users, SSO</h2>
+
+<h3>Credentials for the API</h3>
+<p>Every <code>/api</code> route needs a bearer credential except <code>/api/auth/login</code>, the
+SSO endpoints, <code>/api/health</code>, and <code>/api/hooks/*</code> — webhook URLs are
+capability URLs, unguessable and called by external systems, so they carry no token by design. If
+that is not acceptable in your environment, restrict <code>/api/hooks/</code> at the proxy.</p>
+
+<p>Two kinds of credential: user session tokens (12-hour TTL, from a password login or an SSO
+callback) and the static API token, which always has the admin role. Signing out is browser-side
+only — a session token stays valid until it expires, so <strong>disabling the account is the only
+real revocation lever</strong>, and it takes effect on the next request.</p>
+
+<h3>Roles and visibility</h3>
+<p><code>admin</code> manages users and deployment settings and can see every process;
+<code>editor</code> sees what they created plus what has been shared with them. Sharing is flat:
+a recipient holds the process exactly as its creator does, including the right to share it on, so
+a team can hand work over without an admin. Run history inherits the process's access, because
+step inputs and outputs are as revealing as the definition. A process you cannot see returns
+<strong>404, not 403</strong> — a 403 would confirm the id belongs to something real.</p>
+
+<h3>Secrets</h3>
+<p>Fernet-encrypted rows; the API exposes names only, and steps reference them as
+<code>{{ secrets.name }}</code>, resolved at execution time on the host that runs the step. So
+every engine needs the same key. Rotating the key means re-entering every secret — there is no
+re-encrypt tool.</p>
+
+<h3>The filesystem sandbox</h3>
+<p><code>PROCESS_ENGINE_WORK_DIR</code> is environment-only and <code>GET /api/workspace</code> is
+read-only, deliberately: a signed-in user must not be able to widen the sandbox their steps run
+inside. Relative paths join onto the root, absolute paths must already be inside it, and
+containment is checked <em>after</em> symlinks and junctions resolve.</p>
+
+<h3>Single sign-on</h3>
+<p>Google and Microsoft Entra ID, activated purely by setting a provider's client id and secret;
+an unset provider simply does not appear on the login page. Register
+<code>{PROCESS_ENGINE_PUBLIC_URL}/api/auth/sso/&lt;provider&gt;/callback</code> as the redirect URI.
+Unless <code>PROCESS_ENGINE_SSO_AUTO_PROVISION=true</code>, the email that comes back must match an
+existing username — which is the safe default, since it means an identity provider cannot create
+accounts in your installation.</p>
+
+<div class="callout warn">
+  If SSO is configured but <code>PROCESS_ENGINE_DESIGNER_URL</code> points somewhere with no
+  designer deployed, every login lands on a blank page. The API logs a warning about exactly this
+  at startup — worth reading once after any URL change.
+</div>
+
+<p class="chapter">Chapter 11</p>
+<h2 id="plugins">11. The plugin inventory</h2>
+
+<p><strong>Settings → Plugins</strong> lists what this installation can actually do: every
+plugin's key, category and output ports. It is a read-only inventory, and the first place to look
+when a process refers to a step type nobody can find.</p>
+
+<p>A plugin is part of the product's source, shipped in two halves: its form (manifest and config
+schema) in <code>process-engine-core</code>, which every host installs, and its behaviour in
+<code>process-engine</code>, which only engines install. That is why the API can draw a step it
+cannot run, and why the palette and the engines have to be kept at the same version. There is
+deliberately no drop-in folder: a step executes on whichever engine claims its job, so it cannot
+depend on a loose file that happens to be on one of them. The one alternative is a pip package
+with an entry point in group <code>process_engine.plugins</code>, which must then be installed on
+<em>every</em> host — the engines that execute it and the API that lists it.</p>
+
+<div class="callout warn">
+  <strong>Discovery happens at startup only.</strong> Restart the API <em>and every engine</em>
+  after adding or upgrading a plugin. An API that knows about a plugin no engine has will offer a
+  step in the palette that fails at run time.
+</div>
+
+<p>The extras belong on the engine hosts, since that is where a step's SDK is actually imported:
+<code>pip install "./packages/process_engine[excel,mysql,aws,azure]"</code> installs whichever
+your processes need. Every SDK import is lazy, so a missing extra fails that one step rather than
+the whole engine.</p>
+
+<p>What is built in today, and what each needs from the host:</p>
+
+<table>
+  <tr><th>Category</th><th>Plugin</th><th>Host requirements</th></tr>
+  <tr><td>data</td><td><code>excel_refresh</code></td><td><strong>Windows + Excel + pywin32</strong> (<code>[excel]</code>), interactive session preferred. See <a href="#windows">chapter 8</a>.</td></tr>
+  <tr><td>data</td><td><code>transform</code>, <code>html_table</code></td><td>None.</td></tr>
+  <tr><td>database</td><td><code>mysql_query</code>, <code>mysql_execute</code></td><td>PyMySQL (<code>[mysql]</code>) and network access to the server from the executing host.</td></tr>
+  <tr><td>communication</td><td><code>send_email_smtp</code></td><td>SMTP reachable from the executing host.</td></tr>
+  <tr><td>communication</td><td><code>send_email_ses</code></td><td>boto3, and SES credentials or an instance role.</td></tr>
+  <tr><td>files</td><td><code>s3_download</code>, <code>azure_blob_download</code></td><td>boto3 / azure-storage-blob, and credentials. Writes inside the sandbox only.</td></tr>
+  <tr><td>files</td><td><code>file_purge</code></td><td>Sandbox only. Re-checks every entry it discovers, not just the folder.</td></tr>
+  <tr><td>network</td><td><code>http_request</code></td><td>Outbound network from the executing host.</td></tr>
+  <tr><td>logic / flow / utility</td><td><code>condition</code>, <code>for_each</code>, <code>delay</code>, <code>log</code></td><td>None. <code>for_each</code> runs a <em>published</em> sub-process per item.</td></tr>
+</table>
+
+<p>“The executing host” is the point: in a split deployment these requirements land on the Windows
+engine, not on the container serving the interface.</p>
+
+<p class="chapter">Chapter 12</p>
+<h2 id="monitor">12. Monitoring and logs</h2>
+
+<table>
+  <tr><th>Signal</th><th>Where</th><th>Reads</th></tr>
+  <tr><td>Liveness</td><td><code>GET /api/health</code></td><td>No credential. <code>{"status":"ok"}</code> means the API process is answering — nothing more.</td></tr>
+  <tr><td>Is anything executing?</td><td><code>GET /api/queue</code></td><td>Any signed-in user. How many engines are online and how deep the queue is. <strong>The first thing to check when a run will not start.</strong></td></tr>
+  <tr><td>Which engines?</td><td><code>GET /api/workers</code></td><td>Admin only — it is deployment detail. Worker ids, hostnames, last heartbeat.</td></tr>
+  <tr><td>Run outcomes</td><td>The <em>Runs</em> page, or <code>GET /api/processes/{id}/runs</code></td><td>Status, timings, and every step's recorded input and output.</td></tr>
+</table>
+
+<p>Both programs log to stdout at <code>PROCESS_ENGINE_LOG_LEVEL</code>. In the container both are
+captured by supervisord and appear in <code>docker logs</code>; under systemd they go to the
+journal; on Windows, redirect them to a file in whatever supervisor you use, because a Scheduled
+Task discards them.</p>
+
+<p>A healthy idle engine logs almost nothing — heartbeats and claims are database writes, not log
+lines. Silence from an engine is not evidence it is alive; <code>/api/workers</code> is.</p>
+
+<p class="chapter">Chapter 13</p>
+<h2 id="upgrade">13. Upgrades and rollback</h2>
+
+<ol class="do">
+  <li><strong>Back up the database</strong> (and confirm you have the Fernet key). Schema changes
+      are additive — tables are created on start — but a backup is what makes a rollback a
+      decision rather than a hope.</li>
+  <li><strong>Drain, don't cut.</strong> Stop the engines first and let in-flight runs finish. A
+      killed engine's runs are replayed by another one, which is safe but means at-least-once side
+      effects — a second email, a second file write.</li>
+  <li><strong>Upgrade the API, then the engines.</strong> While the engines are down, runs queue
+      rather than fail; while the API is down, nothing is submitted. Queued work waits.</li>
+  <li><strong>Rebuild the designer</strong> if the frontend changed
+      (<code>npm ci &amp;&amp; npm run build</code>), or just rebuild the container image, which
+      does it for you.</li>
+  <li><strong>Verify:</strong> <code>/api/health</code>, then <code>/api/queue</code> for the
+      engine count, then run one real process end to end.</li>
+</ol>
+
+<p>Rolling back the code is safe; rolling back the <em>database</em> loses whatever ran in
+between. Published versions are immutable, so an older build reading a newer database sees
+processes it may not understand — which is why the API goes first on the way up and last on the
+way down.</p>
+
+<p class="chapter">Chapter 14</p>
+<h2 id="trouble">14. Troubleshooting</h2>
+
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>Runs sit at <span class="pill pill-skip">pending</span> forever.</td><td>Nothing is claiming jobs. Check <code>GET /api/queue</code>: <code>workers_online: 0</code> with a non-zero queue means no engine is running, or it is on a different database. Confirm both hosts have the same <code>PROCESS_ENGINE_DB_URL</code>, and that it is not SQLite.</td></tr>
+  <tr><td><em>Test this step</em> never resolves.</td><td>Same cause — a preview is a queued job like any other, and only an engine answers it.</td></tr>
+  <tr><td>Every step that uses a secret fails to decrypt.</td><td><code>PROCESS_ENGINE_SECRET_KEY</code> differs between the API and the engine, or an engine is falling back to its own generated <code>.process_engine_key</code>. Set it explicitly on both.</td></tr>
+  <tr><td>The engine starts and immediately exits.</td><td>Almost always the database URL: an unreachable server or a missing driver (<code>pip install "./packages/process_engine[mysql]"</code>). The traceback says which.</td></tr>
+  <tr><td>Schedules fire twice.</td><td>Two schedulers that are <em>not</em> sharing a database — usually one host still on SQLite. Several engines on one database is fine and expected.</td></tr>
+  <tr><td>Schedules never fire.</td><td>The API does not schedule anything; at least one engine must be running with <code>PROCESS_ENGINE_WORKER_SCHEDULER</code> not set to false. Also check the trigger is enabled <em>and the process is published</em>.</td></tr>
+  <tr><td>A missed window did not run after an outage.</td><td>Working as intended: a window nobody was up for is skipped, not owed. Run it by hand with <em>Run now</em>.</td></tr>
+  <tr><td>An Excel step fails on a step that works interactively.</td><td>The engine is running non-interactively. See <a href="#windows">chapter 8</a> — DCOM identity, the <code>systemprofile\Desktop</code> folder, and Power Query's per-user credentials.</td></tr>
+  <tr><td>An Excel step hangs.</td><td>An orphaned EXCEL.EXE from a previous crash, or two runs refreshing one workbook. End the stray process; serialise access to the workbook.</td></tr>
+  <tr><td>A file step fails with <code>PathNotAllowed</code>.</td><td>The path resolved outside <code>PROCESS_ENGINE_WORK_DIR</code> — including via a symlink or junction. Move the file inside the sandbox or change the root, which is a server restart.</td></tr>
+  <tr><td>A step ran twice / an email arrived twice.</td><td>An engine died mid-run and another replayed it. Completed steps are replayed from recorded output, but side effects are at-least-once by design. Make externally visible steps idempotent where it matters.</td></tr>
+  <tr><td>SSO logins land on a blank page.</td><td><code>PROCESS_ENGINE_DESIGNER_URL</code> points at an origin with no designer. The API logs a warning about this at startup.</td></tr>
+  <tr><td>SSO returns “no such user”.</td><td><code>PROCESS_ENGINE_SSO_AUTO_PROVISION</code> is false (the default) and the provider's email does not match a username. Create the user, or enable auto-provisioning knowingly.</td></tr>
+  <tr><td>Everything returns 401 after a while.</td><td>Sessions last 12 hours. Sign in again. A disabled account's sessions stop working immediately, by design.</td></tr>
+  <tr><td>A new plugin is not in the palette.</td><td>Discovery is at startup. Restart the API <em>and</em> every engine.</td></tr>
+  <tr><td>A step type exists in the palette but fails at run time.</td><td>The palette is drawn from <code>process-engine-core</code> and the work is done by <code>process-engine</code>, so the API knows a plugin whose implementation the engine has not got. Install the same version of both on every host.</td></tr>
+  <tr><td>The container is <code>unhealthy</code>.</td><td><code>docker logs</code> — supervisord reports which of nginx or uvicorn is failing. A database it cannot reach is the usual reason uvicorn will not start.</td></tr>
+  <tr><td>Stored secrets became unreadable after a redeploy.</td><td>The <code>/data</code> volume was not mounted, so a new Fernet key was generated. Restore the key, or re-enter the secrets and set <code>PROCESS_ENGINE_SECRET_KEY</code> explicitly this time.</td></tr>
+  <tr><td>The database is growing fast.</td><td><code>process_instances</code> keeps every step's input and output. Delete old rows by date; nothing but history depends on them.</td></tr>
+</table>
+
+<h3>Where next</h3>
+<ul>
+  <li><a href="architecture.html">architecture.html</a> — the shape of the thing you are
+      deploying, in diagrams: which package goes on which host, and what crosses the database.</li>
+  <li><a href="guided-tour.html">guided-tour.html</a> — the end-user walkthrough: building,
+      publishing, scheduling, reading runs.</li>
+  <li><code>{your origin}/docs</code> — the live OpenAPI reference, for scripting anything the
+      interface can do.</li>
+  <li><code>deploy/linux-api.env.example</code> and <code>deploy/windows-worker.env.example</code>
+      in the repository — annotated variable lists for the two halves of a split deployment.</li>
+</ul>
+
+<footer>
+  Process Engine — operations runbook. Kept in step with the product: a change to deployment or to
+  a plugin's operational requirements is a change to this document.
+  Companion: <em>docs/guided-tour.html</em> (using the product).
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,18 +1,18 @@
-from fastapi.testclient import TestClient
+﻿from fastapi.testclient import TestClient
 
-from process_engine.api import create_app
-from process_engine.datapicker import build_picker, upstream_step_ids
-from process_engine.models import Connection, ProcessDefinition, Step
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+from process_engine_api import create_app
+from process_engine_api.datapicker import build_picker, upstream_step_ids
+from process_engine_core.models import Connection, ProcessDefinition, Step
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database
 
 TOKEN = "test-token"
 
 
 def make_client() -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
-    client = TestClient(create_app(db=Database("sqlite://"), registry=registry, auth_token=TOKEN))
+    db = Database("sqlite://")
+    client = TestClient(create_app(db=db, registry=spec_registry(), auth_token=TOKEN))
+    client.db = db  # what the engine_host fixture claims this test's jobs from
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -41,7 +41,7 @@ def test_picker_without_run_lists_upstream_steps():
     assert groups[1]["fields"][0]["path"] == "{{ steps.fetch.output }}"
 
 
-def test_picker_flattens_recorded_outputs():
+def test_picker_flattens_recorded_outputs(engine_host):
     client = make_client()
     definition = {
         "name": "picker demo",
@@ -54,8 +54,8 @@ def test_picker_flattens_recorded_outputs():
         "connections": [{"source": "a", "target": "b"}],
     }
     process_id = client.post("/api/processes", json=definition).json()["id"]
-    run = client.post(f"/api/processes/{process_id}/run",
-                      json={"draft": True, "trigger_input": {"order": {"total": 250}}}).json()
+    run = engine_host.run(client, process_id, draft=True,
+                          trigger_input={"order": {"total": 250}})
     assert run["status"] == "succeeded"
 
     picker = client.get(f"/api/processes/{process_id}/steps/b/picker").json()
@@ -87,7 +87,7 @@ def test_names_that_are_not_identifiers_fall_back_to_the_step_id():
     assert not any(" orders" in path for path in paths)
 
 
-def test_picker_reports_branch_ports():
+def test_picker_reports_branch_ports(engine_host):
     client = make_client()
     definition = {
         "name": "branch picker",
@@ -99,7 +99,7 @@ def test_picker_reports_branch_ports():
         "connections": [{"source": "check", "source_port": "true", "target": "after"}],
     }
     process_id = client.post("/api/processes", json=definition).json()["id"]
-    client.post(f"/api/processes/{process_id}/run", json={"draft": True, "trigger_input": {"v": 1}})
+    engine_host.run(client, process_id, draft=True, trigger_input={"v": 1})
 
     picker = client.get(f"/api/processes/{process_id}/steps/after/picker").json()
     check_group = next(group for group in picker["groups"] if group["key"] == "check")

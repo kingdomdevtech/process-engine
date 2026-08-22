@@ -1,26 +1,41 @@
 ---
 name: Plugin authoring
 description: The Plugin contract, config-form UI hints, the filesystem sandbox and the registration checklist
-applyTo: "src/process_engine/plugins/**/*.py,plugins/**/*.py,examples/**/plugins/**/*.py,src/process_engine/plugin.py,src/process_engine/ui.py"
+applyTo: "packages/process_engine_core/plugins/**/*.py,packages/process_engine/plugins/**/*.py,examples/**/plugins/**/*.py,packages/process_engine_core/plugin.py,packages/process_engine_core/ui.py"
 ---
 
 # Writing a Plugin
 
 A Plugin is three things: a `manifest` (identity + input/output ports), a `Config` (pydantic
-model), and `async execute(ctx) -> PluginResult | dict | None`.
+model), and `async execute(ctx) -> PluginResult | dict | None`. The first two are what a step
+*is*; the third is what it *does* and only an engine host ever calls it — so the class is split
+across two modules, along the same line the deployment is split on.
 
 ```python
+# packages/process_engine_core/plugins/thing.py — the form half, installed everywhere
 class ThingConfig(BaseModel):
     target: str = Field(default="", title="Folder", json_schema_extra=ui(group="Source", widget="path"))
 
-class ThingPlugin(Plugin):
+class ThingSpec(PluginSpec):
     """One line an editor would understand, shown in the palette."""
     manifest = PluginManifest(key="thing", name="Thing", description="…", category="files")
     Config = ThingConfig
+```
 
+```python
+# packages/process_engine/plugins/thing.py — the behaviour, installed on engine hosts only
+from process_engine_core.plugin import Plugin, PluginContext, PluginResult
+from process_engine_core.plugins.thing import ThingConfig, ThingSpec
+
+class ThingPlugin(ThingSpec, Plugin):
     async def execute(self, ctx: PluginContext) -> PluginResult:
         ...
 ```
+
+The runnable class *is* the spec plus behaviour, so the two halves cannot disagree about the
+key or what the step accepts. Put the editor-facing docstring on the spec — that is the module
+the designer's palette copy comes from — and the operator-facing detail (what it touches on
+disk, which credential it needs) on the implementation.
 
 - **Failure is a raise.** The engine owns retries, timeout and error routing. Don't catch an
   exception just to return `{"ok": False}` — a failed step routes `{error, step}` to its
@@ -51,7 +66,7 @@ every entry it discovers — see `file_purge._matches`.
 Step forms are aimed at people who don't know what a header or a bind parameter is. The
 designer builds every form from `Config.model_json_schema()` and ships **no per-plugin
 frontend code**, so anything about *how* a field should be edited travels inside the schema
-via `ui()` from `process_engine.ui`:
+via `ui()` from `process_engine_core.ui`:
 
 - `group="…"` splits the form into sections; `advanced=True` folds a field into that section's
   collapsed disclosure — use it sparingly, only for genuine expert knobs.
@@ -72,17 +87,25 @@ Prefer a field that needs no explanation: one `encryption` dropdown beats `use_t
 
 ## Checklist for a new built-in
 
-1. Module in `src/process_engine/plugins/`, with a unique `manifest.key` and a `category` that
-   matches an existing one where possible (the designer tints by category).
-2. Imported **and** listed in `BUILTIN_PLUGINS` in `src/process_engine/plugins/__init__.py` —
-   both, or it won't register.
-3. Any new optional dependency added as an extra in `pyproject.toml`.
-4. Tests: behaviour in `tests/`, plus `tests/test_config_forms.py` covers the schema (it fails
+1. Spec module in `packages/process_engine_core/plugins/`, with a unique `manifest.key` and a
+   `category` that matches an existing one where possible (the designer tints by category).
+2. Imported **and** listed in `BUILTIN_SPECS` in that package's `plugins/__init__.py` — both,
+   or it won't register.
+3. Implementation module in `packages/process_engine/plugins/`, imported **and** listed in
+   `BUILTIN_PLUGINS` in *that* package's `plugins/__init__.py`. Two modules, two list entries.
+4. Any new optional dependency added as an extra in the **engine** package's `pyproject.toml`
+   (`packages/process_engine/`) — the SDK is only needed where `execute` runs. Core stays
+   dependency-light: the API host installs it and must not have to pull boto3 in.
+5. Tests: behaviour in `tests/`, plus `tests/test_config_forms.py` covers the schema (it fails
    on a `show_if` naming a missing field, wording for a renamed option, a list widget on a
-   dict, or a required field hidden by default).
-5. `docs/runbook.html` updated if it has operational constraints (credentials, COM, network).
-6. Restart the API — discovery runs at startup only.
+   dict, or a required field hidden by default). `test_both_tiers_advertise_exactly_the_same_plugins`
+   in `tests/test_registry.py` fails if a spec has no implementation or vice versa.
+6. `docs/runbook.html` updated if it has operational constraints (credentials, COM, network).
+7. Restart the API **and every engine host** — discovery runs at startup only, and the palette
+   must only offer what an engine can actually execute.
 
-Third-party plugins do **not** go in `src/process_engine/plugins/`. Ship them as drop-in `.py`
-files in `./plugins` (or `PROCESS_ENGINE_PLUGINS_DIR`), or as a pip package with an entry point
-in group `process_engine.plugins` — template at `examples/hello-plugin`.
+That is the whole story: **a new plugin lives in this repository.** There is deliberately no
+drop-in folder — a step runs on whichever engine claims its job, so it cannot depend on a loose
+`.py` file somebody dropped on one of them. The one alternative is a pip package with an entry
+point in group `process_engine.plugins` (template at `examples/hello-plugin`), which has to be
+installed on every host that executes.

@@ -3,10 +3,11 @@ import threading
 
 import pytest
 
-from process_engine.engine import DefinitionError, Engine, RunControl, validate, validate_detailed
-from process_engine.models import Connection, ProcessDefinition, RetryPolicy, RunStatus, Step, Trigger
-from process_engine.plugin import Plugin, PluginManifest, PluginResult
-from process_engine.registry import PluginRegistry
+from process_engine.engine import Engine, RunControl
+from process_engine_core.validation import DefinitionError, validate, validate_detailed
+from process_engine_core.models import Connection, ProcessDefinition, RetryPolicy, RunStatus, Step, Trigger
+from process_engine_core.plugin import Plugin, PluginManifest, PluginResult
+from process_engine.registry import default_registry
 
 
 class FlakyPlugin(Plugin):
@@ -36,8 +37,7 @@ class SlowPlugin(Plugin):
 
 
 def make_registry(*extra):
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     for plugin_cls in extra:
         registry.register(plugin_cls)
     return registry

@@ -9,8 +9,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from process_engine.api import create_app
-from process_engine.models import (
+from process_engine_api import create_app
+from process_engine_core.models import (
     NotificationEvent,
     NotificationSettings,
     ProcessDefinition,
@@ -19,7 +19,7 @@ from process_engine.models import (
     StepRun,
     utcnow,
 )
-from process_engine.notifications import (
+from process_engine_core.notifications import (
     MAIL_SETTINGS_KEY,
     MailSettings,
     MailSettingsStore,
@@ -28,8 +28,8 @@ from process_engine.notifications import (
     recipients_for,
     render,
 )
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database
 
 TOKEN = "test-token"
 RELAY = {"host": "smtp.example.com", "sender": "engine@example.com"}
@@ -282,7 +282,7 @@ async def test_ses_sends_the_same_message_smtp_would():
 
 def test_ses_builds_a_raw_email_call_with_the_envelope_recipients():
     """Exercises the real boto3 request shape, with a stubbed client."""
-    from process_engine import notifications
+    from process_engine_core import notifications
 
     calls = []
 
@@ -321,7 +321,7 @@ def test_ses_builds_a_raw_email_call_with_the_envelope_recipients():
 
 
 def test_ses_without_keys_lets_boto3_find_its_own_credentials():
-    from process_engine import notifications
+    from process_engine_core import notifications
 
     calls = []
 
@@ -396,8 +396,7 @@ async def test_a_broken_relay_never_raises_at_the_caller():
 
 
 def make_client(relay: Relay | None = None) -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = spec_registry()
     db = Database("sqlite://")
     notifier = None
     if relay is not None:
@@ -405,6 +404,10 @@ def make_client(relay: Relay | None = None) -> TestClient:
         store.save(MailSettings(**RELAY))
         notifier = Notifier(store, send=relay, public_url=lambda: "https://engine.example.com")
     client = TestClient(create_app(db=db, registry=registry, auth_token=TOKEN, notifier=notifier))
+    # the run is executed by an engine host, so the relay under test has to be
+    # the one *it* holds — the engine_host fixture takes both from here
+    client.db = db
+    client.notifier = notifier
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -454,11 +457,11 @@ def test_a_copy_belongs_to_whoever_made_it():
     assert clone["notifications"]["events"] == ["succeeded"]  # the subscription comes along
 
 
-def test_a_run_emails_the_subscribers():
+def test_a_run_emails_the_subscribers(engine_host):
     relay = Relay()
     with make_client(relay) as client:
         process_id = client.post("/api/processes", json=DEFINITION).json()["id"]
-        run = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+        run = engine_host.run(client, process_id, draft=True)
         assert run["status"] == "succeeded"
 
         relay.wait(1)
@@ -467,13 +470,13 @@ def test_a_run_emails_the_subscribers():
         assert run["id"] in relay.body()
 
 
-def test_started_and_finished_are_two_separate_emails():
+def test_started_and_finished_are_two_separate_emails(engine_host):
     relay = Relay()
     with make_client(relay) as client:
         definition = {**DEFINITION, "notifications": {"events": ["started", "completed"],
                                                       "recipients": ["ops@example.com"]}}
         process_id = client.post("/api/processes", json=definition).json()["id"]
-        client.post(f"/api/processes/{process_id}/run", json={"draft": True})
+        engine_host.run(client, process_id, draft=True)
 
         relay.wait(2)
         assert [message["Subject"] for message in relay.messages] == [
@@ -482,7 +485,7 @@ def test_started_and_finished_are_two_separate_emails():
         ]
 
 
-def test_iterating_a_sub_process_is_still_one_set_of_emails():
+def test_iterating_a_sub_process_is_still_one_set_of_emails(engine_host):
     """A for_each over three rows is one run the user started, not four."""
     relay = Relay()
     with make_client(relay) as client:
@@ -506,7 +509,7 @@ def test_iterating_a_sub_process_is_still_one_set_of_emails():
             "notifications": {"events": ["started", "completed"], "recipients": ["ops@example.com"]},
         }
         parent_id = client.post("/api/processes", json=parent).json()["id"]
-        run = client.post(f"/api/processes/{parent_id}/run", json={"draft": True}).json()
+        run = engine_host.run(client, parent_id, draft=True)
         assert run["status"] == "succeeded"
 
         relay.wait(2)
@@ -517,17 +520,17 @@ def test_iterating_a_sub_process_is_still_one_set_of_emails():
         ]
 
 
-def test_a_process_nobody_subscribed_to_sends_nothing():
+def test_a_process_nobody_subscribed_to_sends_nothing(engine_host):
     relay = Relay()
     with make_client(relay) as client:
         definition = {**DEFINITION, "notifications": {"events": []}}
         process_id = client.post("/api/processes", json=definition).json()["id"]
-        client.post(f"/api/processes/{process_id}/run", json={"draft": True})
+        engine_host.run(client, process_id, draft=True)
         time.sleep(0.3)
         assert relay.messages == []
 
 
-def test_a_failed_run_reports_the_failure():
+def test_a_failed_run_reports_the_failure(engine_host):
     relay = Relay()
     with make_client(relay) as client:
         definition = {
@@ -537,7 +540,7 @@ def test_a_failed_run_reports_the_failure():
             "notifications": {"events": ["failed"], "recipients": ["ops@example.com"]},
         }
         process_id = client.post("/api/processes", json=definition).json()["id"]
-        run = client.post(f"/api/processes/{process_id}/run", json={"draft": True}).json()
+        run = engine_host.run(client, process_id, draft=True)
         assert run["status"] == "failed"
 
         relay.wait(1)

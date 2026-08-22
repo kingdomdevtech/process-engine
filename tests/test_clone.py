@@ -1,16 +1,16 @@
-from fastapi.testclient import TestClient
+﻿from fastapi.testclient import TestClient
 
-from process_engine.api import create_app
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+from process_engine_api import create_app
+from process_engine_core.registry import spec_registry
+from process_engine_core.storage import Database
 
 TOKEN = "test-token"
 
 
 def make_client() -> TestClient:
-    registry = PluginRegistry()
-    registry.load_builtins()
-    client = TestClient(create_app(db=Database("sqlite://"), registry=registry, auth_token=TOKEN))
+    db = Database("sqlite://")
+    client = TestClient(create_app(db=db, registry=spec_registry(), auth_token=TOKEN))
+    client.db = db  # what the engine_host fixture claims this test's jobs from
     client.headers.update({"Authorization": f"Bearer {TOKEN}"})
     return client
 
@@ -122,12 +122,12 @@ def test_clone_of_a_missing_process_is_404():
     assert make_client().post("/api/processes/nope/clone").status_code == 404
 
 
-def test_clone_runs_on_its_own():
+def test_clone_runs_on_its_own(engine_host):
     client = make_client()
     original = client.post("/api/processes", json=DEFINITION).json()
     clone = client.post(f"/api/processes/{original['id']}/clone").json()
 
-    run = client.post(f"/api/processes/{clone['id']}/run", json={"draft": True}).json()
+    run = engine_host.run(client, clone["id"], draft=True)
     assert run["status"] == "succeeded"
     assert run["process_id"] == clone["id"]
     assert client.get(f"/api/processes/{original['id']}/runs").json() == []  # not the original's

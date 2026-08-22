@@ -1,0 +1,16 @@
+# Everything on one machine: what a contributor runs and what the test suite
+# needs. A deployment installs a subset — the Linux container takes core + api
+# (see Dockerfile), a Windows engine host takes core + engine with the extras
+# its plugins actually need.
+#
+#   pip install -r requirements-dev.txt
+#
+# Add [aws] / [azure] to the engine line below to work on the S3, SES or Azure
+# blob plugins; their imports are lazy, so the rest of the suite passes without.
+
+-e packages/process_engine_core
+-e packages/process_engine[excel,mysql]
+-e packages/process_engine_api
+
+pytest>=8
+pytest-asyncio>=0.23

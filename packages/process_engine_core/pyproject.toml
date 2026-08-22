@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "process-engine-core"
+version = "0.1.0"
+description = "Process Engine core: definitions, storage, and the plugin contract both tiers share"
+requires-python = ">=3.11"
+# Installed on every host, so it carries only what *describing* a process needs:
+# no web stack (that is process-engine-api) and no plugin SDKs, drivers or COM
+# (that is process-engine). Optional imports inside notifications.py stay lazy
+# for exactly this reason.
+dependencies = [
+    "pydantic>=2.6",
+    "sqlalchemy>=2.0",
+    "croniter>=2",       # schedule triggers are validated here, not only fired
+    "cryptography>=42",  # secrets and session tokens, encrypted at rest (Fernet)
+]
+
+[project.optional-dependencies]
+# The database driver, because storage.py lives here: whichever tier is being
+# installed, this is the package that has to be able to reach the shared server.
+# A two-host split needs one (SQLite cannot be shared), so the Linux container
+# installs core[mysql]; the engine host gets the same driver via
+# process-engine[mysql], which is there for the MySQL *plugins*.
+mysql = [
+    "pymysql>=1.1",
+]
+
+[tool.setuptools]
+# The project directory *is* the package: pyproject.toml sits beside the modules
+# rather than above a src/ or a repeated folder name.
+packages = ["process_engine_core", "process_engine_core.plugins"]
+package-dir = { "process_engine_core" = "." }

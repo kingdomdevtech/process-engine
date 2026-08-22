@@ -23,9 +23,9 @@ import {
  *
  * The engine's plugin manifest is deliberately UI-free, and the designer builds
  * itself from that manifest — so this is a *fallback* lookup, not a registry.
- * Anything unknown (a drop-in file, a pip-installed plugin) resolves through
- * its category, and finally to a neutral puzzle piece. No plugin ever has to
- * ship frontend code to look right.
+ * Anything unknown — a plugin added since, a pip-installed one — resolves
+ * through its category, and finally to a neutral puzzle piece. No plugin ever
+ * has to ship frontend code to look right.
  */
 const BY_KEY = {
   azure_blob_download: CloudDownload,

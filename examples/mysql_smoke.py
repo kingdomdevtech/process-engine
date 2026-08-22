@@ -8,9 +8,9 @@
 import asyncio
 
 from process_engine.engine import Engine
-from process_engine.models import Connection, ProcessDefinition, Step
-from process_engine.registry import PluginRegistry
-from process_engine.storage import Database
+from process_engine_core.models import Connection, ProcessDefinition, Step
+from process_engine.registry import default_registry
+from process_engine_core.storage import Database
 
 
 def main() -> None:
@@ -29,8 +29,7 @@ def main() -> None:
     published = db.publish_process(definition.id)
     print("published version:", published.version)
 
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = default_registry()
     instance = asyncio.run(Engine(registry).run(db.get_version(definition.id)))
     db.save_instance(instance)
 

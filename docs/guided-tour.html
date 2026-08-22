@@ -124,13 +124,18 @@ Everything runs locally; nothing is sent anywhere.</p>
 
 <pre><code>python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"                 # add ,excel / ,mysql if you need those plugins
+pip install -r requirements-dev.txt     # all three packages, editable
 
-python -m process_engine                # the API + the built designer -> http://127.0.0.1:8000</code></pre>
+python -m process_engine_api            # the API + the built designer -> http://127.0.0.1:8000
+python -m process_engine                # the engine, in a second terminal</code></pre>
 
-<p>That single command is enough if <code>designer/dist</code> has been built already: the API serves
-the interface and the API from one origin. If you are changing the interface, run the dev server
-alongside it in a second terminal:</p>
+<p><strong>Two programs, not one.</strong> The first serves the interface and its API from a single
+origin, once <code>designer/dist</code> has been built; the second is the engine, and it is what
+actually runs your processes. Without it a run simply waits — the designer will tell you nothing is
+listening. The engine serves no web page of its own: you watch it through the designer. (A larger
+installation puts the two on different machines, which is the whole point of the split — see
+<a href="#faq">the FAQ</a> and the <a href="runbook.html">runbook</a>.) If you are changing the
+interface, run the dev server alongside them in a third terminal:</p>
 
 <pre><code>cd designer
 npm install
@@ -709,26 +714,41 @@ applied before the first paint, so there is no white flash on load.</p>
 <h2 id="extend">15. Adding your own step type</h2>
 
 <p>When no combination of the built-in steps does what you need, the extension seam is a plugin —
-a small Python class. The palette entry, the config form, the ƒx picker and the Input/Output tabs
-are all generated from it; there is no front-end work.</p>
+a small Python class, written in two halves. The palette entry, the config form, the ƒx picker and
+the Input/Output tabs are all generated from it; there is no front-end work.</p>
 
-<pre><code>from pydantic import BaseModel
-from process_engine.plugin import Plugin, PluginContext, PluginManifest, PluginResult
+<p>The first half says what the step <em>is</em> — its identity and its settings. It lives in the
+shared package, because the designer needs it to draw the form:</p>
+
+<pre><code># packages/process_engine_core/plugins/uppercase.py
+from pydantic import BaseModel
+from ..plugin import PluginManifest, PluginSpec
 
 class UppercaseConfig(BaseModel):
     text: str = "{{ input.message }}"
 
-class UppercasePlugin(Plugin):
+class UppercaseSpec(PluginSpec):
     manifest = PluginManifest(key="uppercase", name="Uppercase", category="custom")
-    Config = UppercaseConfig
+    Config = UppercaseConfig</code></pre>
 
+<p>The second half says what it <em>does</em>. It lives in the engine package, because only the
+machines that run your processes need it — and only they need whatever library the work depends
+on:</p>
+
+<pre><code># packages/process_engine/plugins/uppercase.py
+from process_engine_core.plugin import Plugin, PluginContext, PluginResult
+from process_engine_core.plugins.uppercase import UppercaseSpec
+
+class UppercasePlugin(UppercaseSpec, Plugin):
     async def execute(self, ctx: PluginContext) -> PluginResult:
         return PluginResult.main({"text": ctx.config.text.upper()})</code></pre>
 
-<p>Save that as <code>plugins/uppercase.py</code>, restart the API, reload the designer — it is in
-the palette. Plugins are discovered at startup only, which is why a new one always needs a
-restart. <strong>Settings → Plugins</strong> lists everything the server currently has, with each
-one's key, category and output ports.</p>
+<p>Each half is listed in its package's <code>plugins/__init__.py</code> —
+<code>BUILTIN_SPECS</code> for the first, <code>BUILTIN_PLUGINS</code> for the second — and both
+ship with the product, so every machine has the part it needs. Restart the API <em>and</em> the
+engine, reload the designer, and it is in the palette. Plugins are discovered at startup only,
+which is why a new one always needs a restart. <strong>Settings → Plugins</strong> lists everything
+the server currently has, with each one's key, category and output ports.</p>
 
 <p>The full contract — ports, retries, blocking work, error handling, packaging as a pip
 installable, and testing — is in the companion document
@@ -745,7 +765,9 @@ installable, and testing — is in the companion document
   <tr><td><code>cannot resolve {{ … }}</code></td><td>The path does not exist in this step's data. Open the Input tab and look at the real shape, then re-assign with ƒx.</td></tr>
   <tr><td>The ƒx picker shows no sample values.</td><td>It samples the most recent run. Run the process once first.</td></tr>
   <tr><td>A required field is flagged but I filled it in.</td><td>Config changes are saved with the process — press <kbd>Ctrl</kbd>+<kbd>S</kbd>; the badge clears on the next validate.</td></tr>
-  <tr><td>My new plugin is not in the palette.</td><td>Discovery happens at API startup. Restart <code>python -m process_engine</code>, then reload the page.</td></tr>
+  <tr><td>My new plugin is not in the palette.</td><td>Discovery happens at startup. Restart <code>python -m process_engine_api</code> <em>and</em> every engine, then reload the page.</td></tr>
+  <tr><td>A run sits at <em>pending</em> and never starts.</td><td>Every run is queued and picked up by an engine, which is a separate program — usually on another machine. Nothing is listening. Ask an administrator whether the engine is running; the <a href="runbook.html">runbook</a> explains the split.</td></tr>
+  <tr><td><em>Test this step</em> spins for a while.</td><td>Same reason: the step is being run by the engine, not by the page. It fills in as soon as the answer comes back.</td></tr>
   <tr><td><em>Publish</em> was refused.</td><td>The process has validation issues. Look for red node badges and the banner over the canvas.</td></tr>
   <tr><td>A file step fails with <code>PathNotAllowed</code>.</td><td>The path resolved outside the working directory. See <a href="#secrets">chapter 13</a>; the root is server configuration.</td></tr>
   <tr><td>I cannot add users.</td><td>That needs the <code>admin</code> role. Sign in with the API token if you are locked out.</td></tr>

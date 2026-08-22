@@ -1,10 +1,11 @@
 ---
-description: Start the API and designer locally, then smoke-test both
+description: Start the API, an engine and the designer locally, then smoke-test them
 allowed-tools: Bash, PowerShell, Read, Glob, Grep
 ---
 
-Bring the app up locally and prove it works. Both servers, then a real request
-through each. Report the URLs and what you saw — don't stop at "started".
+Bring the app up locally and prove it works. The API, an engine and the
+designer, then a real request through each. Report the URLs and what you saw —
+don't stop at "started".
 
 ## 1. Check what is already listening
 
@@ -27,19 +28,27 @@ restart it rather than doing so unprompted.
 The venv lives at `.venv`; call its interpreter directly rather than activating.
 
 ```bash
-cd "<repo root>" && .venv/Scripts/python.exe -m process_engine > /tmp/pe-api.log 2>&1
+cd "<repo root>" && .venv/Scripts/python.exe -m process_engine_api > /tmp/pe-api.log 2>&1
+cd "<repo root>" && .venv/Scripts/python.exe -m process_engine > /tmp/pe-engine.log 2>&1
 cd "<repo root>/designer" && npm run dev > /tmp/pe-designer.log 2>&1
 ```
 
-Both with `run_in_background: true`. API → http://127.0.0.1:8000 (docs at
+All three with `run_in_background: true`. API → http://127.0.0.1:8000 (docs at
 `/docs`), designer → http://localhost:5173 (proxies `/api` to :8000).
+
+**The engine is not optional.** `process_engine_api` executes nothing: every run
+and every step preview is queued through the database and claimed by an engine,
+so without `python -m process_engine` the Run button leaves a PENDING run
+spinning and the Output tab says nothing is listening. The engine serves no
+HTTP — check it through the API (`/api/workers` for its heartbeat, `/api/queue`
+for the backlog).
 
 Read the logs before assuming success — uvicorn exits with code 3 and a
 bind error when :8000 is taken, and `npm run dev` prints the real port it
 picked, which is not always 5173.
 
 If `.venv` or `designer/node_modules` is missing, install first:
-`pip install -e ".[dev,excel,mysql]"` and `cd designer; npm install`.
+`pip install -r requirements-dev.txt` and `cd designer; npm install`.
 
 ## 3. Drive the API
 
@@ -58,6 +67,12 @@ curl -s -o /dev/null -w "proxy:%{http_code}\n" -H "Authorization: Bearer $TOKEN"
 
 Plugin count is the useful signal: registry discovery runs at startup only, so a
 plugin you just added and a missing one look identical until you restart.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/workers      # engines online
+```
+
+An empty list means nothing can run, whatever the other routes say.
 
 ## 4. Drive the designer, and look at the screenshot
 
@@ -99,6 +114,6 @@ shows — or create one with **New process** and drop a step from the palette.
 
 ## 5. Report
 
-Give the user the two URLs, the plugin/process counts, and what the screenshots
-showed. Flag anything you reused rather than started, and leave the background
-servers running unless asked to stop them.
+Give the user the two URLs, the plugin/process counts, whether an engine is
+online, and what the screenshots showed. Flag anything you reused rather than
+started, and leave the background servers running unless asked to stop them.

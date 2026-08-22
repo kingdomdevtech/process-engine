@@ -14,22 +14,72 @@ n8n-style drag-and-drop workflow automation in Python. Domain language: a **Proc
 
 ```powershell
 .\.venv\Scripts\Activate.ps1                 # venv lives at .venv
-pip install -e ".[dev,excel,mysql]"          # excel=pywin32 (Windows), mysql=PyMySQL
-pip install -e examples/hello-plugin         # example entry-point plugin
+pip install -r requirements-dev.txt          # all three packages, editable, plus pytest
+pip install -e examples/hello-plugin         # the entry-point plugin some tests need
 
 pytest                                       # full suite
 pytest tests/test_engine.py -k branching     # single test
 python examples\demo.py                      # run a process end-to-end, no server
-python -m process_engine                     # API on http://127.0.0.1:8000 (docs at /docs)
+python -m process_engine_api                 # API on http://127.0.0.1:8000 (docs at /docs)
+python -m process_engine                     # the engine: claims queued jobs, fires cron
+                                             #   nothing runs until this is up — see Queue below
 
 cd designer; npm run dev                     # designer on :5173, proxies /api to :8000
 cd designer; npm run build                   # verify the frontend compiles
 
-docker compose up -d mysql                   # optional MySQL backend, then set
+docker compose up -d --build                 # designer+API container -> :8000
+docker compose up -d mysql                   # or just the MySQL backend, then set
 # $env:PROCESS_ENGINE_DB_URL = "mysql+pymysql://process_engine:process_engine@127.0.0.1:3306/process_engine"
 ```
 
 Async tests need no decorator — pytest-asyncio runs in `auto` mode (pyproject.toml).
+
+## Three distributions, and what each host installs
+
+The product is three Python packages under `packages/`, plus the npm app in `designer/`.
+Which package a module belongs to is a **deployment decision**, not a tidiness one — it
+decides which machines have to install it. `docs/architecture.html` draws all of this.
+
+| Package | Answers | Installed on |
+| --- | --- | --- |
+| `process-engine-core` | what a process *is* — `models`, `storage`, `jobs`, `plugin`, `registry`, `validation`, `ui`, `workspace`, `secrets_store`, `security`, `urls`, `notifications`, and `plugins/` (manifests + `Config`, no behaviour) | every host |
+| `process-engine` | what runs one — `engine`, `worker`, `scheduler`, `expressions`, and `plugins/` (the implementations, with `execute`) | engine hosts |
+| `process-engine-api` | the designer's backend — `app`, `users`, `sso`, `datapicker` | the Linux container |
+
+Both tiers depend on core; **neither depends on the other**, and the API's distribution
+contains no engine and no plugin implementation at all. So "the container cannot execute a
+step" is a property of the install rather than a promise — there is no `execute()` in the
+wheel to call. The old grep-enforced rule ("`process_engine` must never import
+`designer_api`") is now enforced by packaging: a `fastapi`/`uvicorn` import inside
+`process_engine` would be a design break, and `process_engine_api` importing `process_engine`
+would be a worse one.
+
+Ask **"which hosts have to install this?"** before adding a module. If the answer is "both",
+it belongs in core — that is why `urls.py`, `notifications.py` and `workspace.py` live there
+rather than beside the code that seems to own them.
+
+Two tests in `test_worker.py` enforce this rather than trusting it, each running a fresh
+interpreter with half the product made unimportable:
+
+- `test_the_engine_reaches_the_database_without_the_api` runs a queued job to completion with
+  `process_engine_api`, `fastapi`, `uvicorn` and `starlette` all blocked. Everything the
+  engine needs it reads from the database, sub-process definitions included
+  (`definition_resolver=db.get_version`), so it never calls the API — not for work, not for
+  definitions, not for secrets.
+- `test_the_api_serves_and_queues_without_the_engine_installed` is the mirror: with
+  `process_engine` blocked, the API still answers the whole palette from the specs, stores a
+  definition and publishes a run to the queue. Each script asserts its own import blocker
+  works first, so neither can pass by proving nothing.
+
+### Testing across the seam (`tests/conftest.py`)
+
+Because the API executes nothing, a test that wants a *finished* run has to do what the
+deployment does. `engine_host` is that: a fixture that claims jobs from the test's own
+`Database` and runs them through the same `claim_job` → `execute_claimed` path `worker.serve`
+uses. `engine_host.run(client, process_id, draft=True)` asks, drains and returns the finished
+run; `.preview(...)` does the 202-then-poll. Each module's `make_client` attaches `client.db`
+(and `client.notifier` where mail is under test) for it to find. Prefer this over calling the
+`Engine` directly in an API test — it exercises the path production actually takes.
 
 ## Architecture
 
@@ -58,42 +108,62 @@ Three strictly separated layers; keep them that way:
    `Config.model_json_schema()`); there is no per-plugin frontend code. Edge `sourceHandle`
    becomes `Connection.source_port`. `SchemaForm.jsx` picks each control from the JSON Schema
    type — `list[str]` is a chip editor, `dict[str, X]` a name/value editor — and a plugin
-   refines that with the `x-ui` hints described under *Config forms* below. Schema
+   refines that with the `x-ui` hints described under _Config forms_ below. Schema
    `format: "html"` on a string field renders the HTML editor — see `send_email_ses`'s
    `body_html`. `schemaExample.js` turns a config schema
-   into the pre-configured JSON behind *Show example* (JSON tab) and field placeholders; steer
+   into the pre-configured JSON behind _Show example_ (JSON tab) and field placeholders; steer
    it with pydantic `Field(examples=[...])` rather than by special-casing a plugin in the
    designer. Selecting a step gives Input/Config/Output
    tabs (`StepInput` → `/steps/{id}/input`, `StepPanel`, `StepOutput` → `/steps/{id}/preview`);
-   the **ƒx** button opens the picker fed by `/steps/{id}/picker`. Undo/redo covers canvas
+   the **ƒx** button opens the picker fed by `/steps/{id}/picker`. `StepOutput` handles both
+   preview shapes — a finished answer, or a `202` it then polls (`/previews/{id}`) while
+   telling the user whether anything is listening; `Editor`'s `runDraft` does the same for a
+   run that comes back non-terminal, so nothing in the designer knows which host executed.
+   Undo/redo covers canvas
    structure only (drop/connect/delete/drag), by design. Validation badges come from
    client-side required-field checks plus `/validate`'s `detailed[].step_id`; step-level
    issues badge the node, process-level ones surface in a banner over the canvas. `position`
    is designer-owned, so a definition built by the API or a test has every step at (0,0) —
    `layoutGraph` in `layout.js` lays those out in dependency order on load (`needsLayout`
-   gates it) without writing back. That same function backs the *Tidy up steps* command
+   gates it) without writing back. That same function backs the _Tidy up steps_ command
    (Ctrl+Shift+L), which does write positions and is undoable. `layout.js` also owns the
    canvas orientation (`horizontal | vertical`, stored in `pe_canvas_dir`): like the theme
-   it is a per-browser preference, deliberately *not* part of the definition, and
+   it is a per-browser preference, deliberately _not_ part of the definition, and
    `StepNode.jsx` reads it to move its handles between the sides and the top/bottom — moving
    a handle needs `useUpdateNodeInternals` or the edges keep their old anchors. Flipping the
    direction re-runs the layout, since the old positions would leave every edge doubling
    back. A page contributes its own Ctrl+K entries through `useRegisterCommands`
    (`commands.js`); the palette lives above the router and knows nothing about the editor.
 3. **Engine** (`engine.py`) — executes a definition, returns a `ProcessInstance`. Never
-   touches storage or HTTP; `api.py` composes engine + `storage.py` + registry via
-   `create_app(db, registry)`. There is deliberately no module-level `app` (no import side
-   effects); `__main__.py` builds one.
+   touches storage or HTTP; `worker.py` composes engine + `storage.py` + registry, and that
+   is the engine host's whole program. `process_engine_api/app.py` composes the same storage
+   and a registry of plugin *specs* via `create_app(db, registry)` — but no engine, because
+   its distribution has none. There is deliberately no module-level `app` (no import side
+   effects); `process_engine_api/__main__.py` builds one.
 
-### Plugin contract (`plugin.py`)
+### Plugin contract (`plugin.py`), split along the deployment seam
 
-A Plugin = `manifest` (identity + input/output ports) + `Config` (pydantic model) +
-`async execute(ctx) -> PluginResult | dict | None`. Failure = raise; the engine owns retries,
-timeout, and error routing. Blocking work still goes through `await asyncio.to_thread(...)`
-(see `excel_refresh.py`, `send_email.py`): each plugin attempt already executes on its own
-worker thread, so blocking hurts only that step — but a blocked worker loop cannot enforce
-`timeout_seconds` until the call returns. Emitting on a named port
-(`PluginResult.on("true", data)`) is how branching happens.
+A Plugin has always declared three things, and they now live in two packages:
+
+- **`PluginSpec`** (`process_engine_core/plugin.py`) — `manifest` (identity + input/output
+  ports) + `Config` (pydantic model). What a step *is*: enough to draw the palette entry,
+  generate the config form and validate a definition, and nothing that can be called. The
+  API installs only this.
+- **`Plugin`** — adds `async execute(ctx) -> PluginResult | dict | None`. The runnable class
+  subclasses the spec (`class HttpRequestPlugin(HttpRequestSpec, Plugin)`), so the two halves
+  cannot disagree about the key or what it accepts.
+
+Failure = raise; the engine owns retries, timeout, and error routing. Blocking work still
+goes through `await asyncio.to_thread(...)` (see `excel_refresh.py`, `send_email.py`): each
+plugin attempt already executes on its own worker thread, so blocking hurts only that step —
+but a blocked worker loop cannot enforce `timeout_seconds` until the call returns. Emitting
+on a named port (`PluginResult.on("true", data)`) is how branching happens.
+
+One `PluginRegistry` class serves both, differing only in what it was loaded with, and
+`registry.executable(key)` is how anything asks which it is holding. `Engine.__init__`
+checks its whole registry with `executable(key, require=True)`, so wiring an engine to the
+API's spec registry raises a `PluginError` naming the problem instead of an `AttributeError`
+from inside the executor on somebody's first step.
 
 ### Config forms (`ui.py` + `SchemaForm.jsx`)
 
@@ -127,18 +197,31 @@ Renaming a plugin key is a breaking change for saved definitions — add the old
 `registry.get()`/`__contains__` but are excluded from `manifests()`, so retired keys keep
 working without appearing in the palette.
 
-Three discovery paths (`registry.py`), all resolved at startup only — a new plugin requires an
-API restart:
-- drop-in `.py` files in `./plugins` (or `PROCESS_ENGINE_PLUGINS_DIR`)
-- pip packages with entry points in group `process_engine.plugins` (template: `examples/hello-plugin`)
-- built-ins: must be imported **and** listed in `BUILTIN_PLUGINS` in `src/process_engine/plugins/__init__.py`
+**A new plugin goes in this repository.** Two discovery paths (`registry.py`), both resolved
+at startup only — adding one means restarting the API (so it appears in the palette) _and_
+every engine (so it can run):
+
+- built-ins: **two modules and two list entries**, one per side of the seam — the spec in
+  `packages/process_engine_core/plugins/<key>.py`, listed in `BUILTIN_SPECS`; the
+  implementation in `packages/process_engine/plugins/<key>.py`, listed in `BUILTIN_PLUGINS`.
+  Each tier loads its own list (`spec_registry()` on the API, `default_registry()` on an
+  engine), and both build the same `PluginRegistry`, so every key in the palette is a key
+  some engine can run. This is the path.
+- pip packages with entry points in group `process_engine.plugins` (template:
+  `examples/hello-plugin`) — for a plugin another team owns on its own release cycle; it has
+  to be installed on every host that executes, so prefer a built-in.
+
+There is deliberately **no drop-in folder**. Loose `.py` files under `./plugins` were removed:
+a step runs on whichever host claims it, so it must not depend on a file somebody dropped on
+one of them, and neither registry factory takes a path argument, so the API and the engines
+cannot disagree about what exists.
 
 ### Filesystem sandbox (`workspace.py`)
 
 Step config is data an editor authors, so any plugin taking a path must resolve it with
 `workspace.resolve()` — never `Path(cfg.some_path)`. Relative paths join onto the working
 directory (`PROCESS_ENGINE_WORK_DIR`, default `./workdir`), absolute ones must already be
-inside it, and containment is checked *after* symlink/junction resolution;
+inside it, and containment is checked _after_ symlink/junction resolution;
 `PathNotAllowed` (a `ValueError`) fails the step. A plugin that walks a tree must re-check
 every entry it discovers, not just the folder it was handed (`file_purge._matches`).
 Download plugins share `plugins/_download.py` — where the file lands (`target_path`) and
@@ -150,10 +233,11 @@ must not be able to widen the sandbox their steps run inside. `excel_refresh` an
 behind the sandbox would break saved definitions, so it is a deliberate migration, not a
 drive-by fix.
 
-### Auth, users, secrets (api.py + users.py + secrets_store.py + sso.py + security.py)
+### Auth, users, secrets (process_engine_api/{app,users,sso}.py + core's secrets_store.py + security.py)
 
 - Every `/api` route needs a bearer credential **except** `/api/auth/login`, the SSO
-  endpoints, and `/api/hooks/*` (webhook capability URLs, deliberately token-free).
+  endpoints, `/api/health` (a probe holds no credential) and `/api/hooks/*` (webhook capability
+  URLs, deliberately token-free).
 - Credentials: user session tokens (Fernet, 12 h TTL, issued by `/api/auth/login` or the
   OIDC SSO callback) or the static API token (admin-role bootstrap/machine credential from
   `PROCESS_ENGINE_AUTH_TOKEN` / generated `.process_engine_auth`). Roles: `admin` (manages
@@ -161,7 +245,7 @@ drive-by fix.
   Signing out is browser-side only — a session token stays valid until its TTL expires, so
   disabling the account is the only real revocation lever.
 - **Who can see a process.** An admin sees every one; anyone else sees what they created
-  (`created_by`) plus what is in `shared_with`, and sharing is *flat* — a recipient holds it
+  (`created_by`) plus what is in `shared_with`, and sharing is _flat_ — a recipient holds it
   exactly as the creator does, including the right to share it on, so a team can hand work
   over without an admin. Both fields are server-owned: `update_process` carries them over so a
   crafted PUT cannot grant access, and `POST /processes/{id}/share` (whole list, not a delta)
@@ -172,7 +256,9 @@ drive-by fix.
   the id belongs to a real process. A clone belongs to whoever made it and starts unshared.
   `tests/test_sharing.py` covers all of this.
 - **Settings is admin-only, and deliberately holds only deployment configuration** — the mail
-  relay, the file sandbox, users, the installed plugin inventory. Things an individual sets
+  relay, execution mode and engine hosts, the file sandbox, users, the installed plugin
+  inventory (`GET /api/queue` is open to any signed-in user, since it explains a spinner they
+  are looking at; `GET /api/workers` names hosts and is admin-only). Things an individual sets
   for themselves live where their audience is: theme and the guided tour in the account menu
   (`AppShell`), secrets on their own page. So do not add an editor-facing control to Settings,
   and do not lock down `GET /api/plugins`, `GET /api/secrets` or `GET /api/notifications/mail`
@@ -189,19 +275,21 @@ drive-by fix.
 ### Engine semantics (the non-obvious parts)
 
 - Graph must be a DAG (`validate()` rejects cycles); iteration is the `for_each` plugin,
-  which runs a *published sub-process* per item via `ctx.run_subprocess` (wired from the
+  which runs a _published sub-process_ per item via `ctx.run_subprocess` (wired from the
   engine's `definition_resolver`; depth-capped). This is deliberate — do not add loop edges.
 - **Single-step preview**: `Engine.preview_step()` executes one step using a recorded run's
   outputs and returns a `StepRun` without persisting anything. Real-run and preview input
   must stay identical, so both build it through `combine_deliveries()` /
   `deliveries_from_run()` — change those, not one call site. The plugin really executes, so
-  previewing a step with side effects performs them (same trade-off n8n makes).
-- **Durability**: `api.py` passes `on_update=db.save_instance`, so instance state persists
-  after every step. On startup, instances stuck in RUNNING are auto-resumed; resume replays
+  previewing a step with side effects performs them (same trade-off n8n makes). The reply
+  payload is built by `engine.preview_result()` wherever the step ran, so the API and a
+  worker cannot answer differently.
+- **Durability**: the worker passes `on_update=db.save_instance`, so instance state persists
+  after every step. On startup, instances stuck in RUNNING are re-queued; resume replays
   SUCCEEDED steps from recorded outputs instead of re-executing (side effects are
   at-least-once). `RunControl` gives cooperative pause/cancel between steps; PAUSED runs
   keep PENDING steps and resume via the same replay path.
-- A step runs when all incoming connections are *settled* (upstream emitted on that port, or
+- A step runs when all incoming connections are _settled_ (upstream emitted on that port, or
   the path is dead). Zero deliveries → step is SKIPPED and the skip cascades. Condition
   branching depends on this; don't "fix" skipped branches.
 - **Ready steps run in parallel** — one asyncio task per step, and each plugin attempt
@@ -210,36 +298,99 @@ drive-by fix.
   are the only ordering guarantee, so never rely on `{{ steps.x }}` reaching a step that is
   not upstream of it. Orchestration, `on_update` persistence and notifications stay on the
   engine's loop; `ctx.run_subprocess` hops back to it thread-safely. A failure, pause or
-  cancel stops *launching* steps; those already in flight finish and are recorded.
+  cancel stops _launching_ steps; those already in flight finish and are recorded.
 - `{{ dotted.path }}` expressions in step config are resolved **just before** execution
   against `{trigger, steps, variables, input}` (`expressions.py` — lookups only, never eval),
-  *then* validated against the plugin's `Config`. A whole-string expression keeps its type.
+  _then_ validated against the plugin's `Config`. A whole-string expression keeps its type.
 - A failed step (after retries) routes `{error, step}` to its `error` port if connected;
   otherwise the whole run fails and remaining steps become SKIPPED.
 
-### Queue mode (`worker.py`)
+### The queue (`worker.py` + core's `jobs.py`)
 
-`PROCESS_ENGINE_RUN_WORKERS=N` moves background runs (manual `background: true`, schedule,
-webhook, resume) into a pool of N spawned worker processes — n8n's queue mode without the
-broker: the job carries a snapshot of the definition taken at enqueue time, and the shared
-database coordinates everything else. Threads share one GIL; processes do not, which is what
-makes CPU-bound plugin work scale. The parts that keep the rest of the design honest:
+**There is one execution mode, and it is not a mode.** The API writes every job to the
+`job_queue` table and engines claim it — there is no switch, no inline path and no worker
+pool on the API host, because that host holds no engine to run one with. Nothing executes
+until a `python -m process_engine` is up; the earlier `PROCESS_ENGINE_QUEUE` and
+`PROCESS_ENGINE_RUN_WORKERS` variables are gone, and nothing reads them.
 
-- A fresh run is persisted as a **PENDING placeholder before dispatch**, so it is visible
-  immediately and — because the worker *resumes* that row — re-dispatched by the startup
-  recovery sweep (which picks up PENDING as well as RUNNING) if the server dies while the
-  job is still queued.
+n8n's queue mode without the broker: a job carries a snapshot of the definition taken at
+enqueue time, and the shared database coordinates everything else. A fresh run is persisted
+as a **PENDING placeholder before dispatch** (`enqueue_run`), so it is visible immediately
+and — because the worker _resumes_ that row — re-dispatched by the startup recovery sweep
+(which picks up PENDING as well as RUNNING) if the container dies while the job is still
+queued. The parts that keep the rest of the design honest:
+
 - A worker owns the whole run: the engine, per-step persistence, and that run's
-  notifications, under the same rules as `api.py` — announce once, sub-runs silent, one
-  email per run end. `init_worker` rebuilds its stack from the same env vars the API reads
-  (workers are spawned, never forked).
+  notifications — announce once, sub-runs silent, one email per run end. `init_worker`
+  rebuilds its stack **from env vars alone** (workers are spawned, never forked), which is
+  also what lets the same function run on another machine.
 - **Pause/cancel cross the process boundary through the `run_signals` table**: the API
-  writes the request when the run id is not in its in-process `controls`, the worker polls
-  between steps and clears the row when the run settles. A cancel queued before the job
-  starts wins deterministically.
-- Foreground runs and step previews stay in the API process — they need the result inside
-  the HTTP response. SQLite copes with light queue-mode use; a shared MySQL/Postgres is the
-  right backend once workers are on.
+  writes the request, the worker polls between steps and clears the row when the run settles.
+  A cancel queued before the job starts wins deterministically.
+- SQLite is fine for one machine and is what the tests use; a shared MySQL/Postgres is
+  _required_ across hosts, since SQLite cannot be shared.
+
+The three job kinds (`jobs.py`) and the rest of the shape:
+
+- Start an engine with `python -m process_engine` (`worker.serve`). It polls `job_queue`,
+  claims the oldest row with a time-boxed lease, and owns that run end to end.
+  Run one process per concurrent run.
+- `claim_job`'s guarded `UPDATE` is the lock (portable to SQLite; no `SKIP LOCKED`). A worker
+  that dies mid-run lets its claim lapse after the lease, and another reclaims the job and
+  replays the persisted instance — the same at-least-once durability as everywhere else. A
+  _slow_ run must not look like a dead one, so `_renewed_claim` keeps touching the row from a
+  daemon thread (SQS's `ChangeMessageVisibility`) while the job holds the event loop.
+- **Every run is a queued run**, including the one behind the designer's Run button. The API
+  returns the PENDING instance rather than a finished one, so the designer's existing
+  `pollRun` handles it and no client needs a special case.
+- **A preview becomes request/reply** (`kind="preview"`). The POST validates the step and its
+  plugin, then answers **202** with a poll URL — Asynchronous Request-Reply, the standard
+  shape for "the answer cannot come back on this connection". The worker writes the result
+  into the job row (`complete_job`), `GET /processes/{id}/previews/{preview_id}` collects it
+  and calls `finish_job`, and uncollected replies are swept by `purge_jobs`. Both paths build
+  the payload with `engine.preview_result`, so the Output tab cannot tell who answered.
+  The claimable predicate must keep excluding settled rows, or a delivered reply gets
+  re-claimed and re-executed as work.
+- **Cron belongs to the engine hosts**, not the API: due times live in `schedule_state`, and
+  `claim_schedule`'s guarded `UPDATE` (`WHERE next_due = <the due we saw>`) means one firing
+  happens once however many engines are watching. So `create_app` starts **no** `Scheduler`
+  at all — it could not run what one fired — and `worker.serve` ticks one. A window nobody
+  was up for is rolled forward and skipped (`LATE_TOLERANCE_SECONDS`) — cron semantics, not
+  a stampede on start-up. `test_the_designer_api_leaves_scheduling_to_the_engine_hosts`
+  enforces it.
+- The API's restart recovery sweep **skips runs that still have a job row**: this container
+  restarting says nothing about the host executing that run, and a lapsed lease is how a dead
+  one is recovered.
+- **"Queued" has to be legible**, or the designer just spins. Workers heartbeat into the
+  `workers` table every poll; `GET /api/queue` (any signed-in user) reports mode, depth and
+  how many are online, `GET /api/workers` (admin) names them, and `StepOutput`/Settings →
+  Execution say "no engine is running right now" rather than waiting forever.
+
+### Split deployment (Linux designer + Windows engine)
+
+Two deployments: a **Linux container** with the designer and `process-engine-api` (see the
+`Dockerfile` — nginx serves `designer/dist` and proxies `/api` to uvicorn on loopback, so it
+is one origin and CORS never matters), and a **Windows host** running `python -m
+process_engine` for the Excel/COM plugins. A shared MySQL/Postgres is the only channel;
+`PROCESS_ENGINE_SECRET_KEY` must be byte-identical on both or the engine cannot decrypt the
+secrets steps use. `deploy/*.env.example` are the working templates.
+
+The install is what enforces the split. The container takes
+`process_engine_core[mysql]` + `process_engine_api` and never `process_engine`; the Windows
+host takes `process_engine_core` + `process_engine[excel,mysql]` and never the API. Neither
+can do the other's job, and `docker exec … python -c "import process_engine"` failing in the
+container is the property, not a bug.
+
+The designer's fetches are same-origin by default (`/api`, `/help`). To host it separately
+from its API, build it with `VITE_API_BASE=https://engine…` — every API call, the webhook-URL
+preview, the SSO start and the guided-tour doc link then target that origin
+(`designer/src/api.js` `engineUrl`; see `designer/.env.example`). Auth is a Bearer token in
+`localStorage`, not a cookie, so cross-origin calls need no credential handling and CORS stays
+`*`. `PROCESS_ENGINE_PUBLIC_URL` is the API's _own_ origin (the OIDC callback registered with
+the provider) while `PROCESS_ENGINE_DESIGNER_URL` is where the browser lands after SSO and
+where notification run-links point — one origin unless the designer is deployed apart, then
+two. Both live in core's `urls.py`, not the API package, because the engine host is the one
+that sends the notification email and has to put a link in it.
 
 ### Storage semantics (`storage.py`)
 
@@ -248,21 +399,32 @@ approach) via SQLAlchemy — SQLite by default, MySQL/Postgres by URL (`PROCESS_
 The `processes` table holds only the editable draft; `publish` snapshots an immutable copy
 into `process_versions` and bumps `latest_version`. Runs execute the latest published version
 unless `draft: true`. Preserve this immutability — running instances record the version they
-used. The `settings` table is the one place an admin-editable *deployment* setting lives (one
+used. The `settings` table is the one place an admin-editable _deployment_ setting lives (one
 JSON document per key; only the notification relay so far) — anything security-shaped stays
 env-only, as the file sandbox does.
+
+Four tables exist purely to coordinate the two hosts, and are the only state they share
+beyond definitions and runs: `job_queue` (work to claim, runs and previews alike),
+`run_signals` (pause/cancel across the boundary), `schedule_state` (cron due times, claimed by
+rolling one forward) and `workers` (heartbeats, so "queued" can be told from "nobody is
+listening"). SQLite reads `DateTime(timezone=True)` back naive, so anything comparing a stored
+timestamp with `utcnow()` goes through `as_utc()` — a naive/aware comparison raises.
 
 ### Run notifications (`notifications.py`)
 
 A process can email people when a run starts/succeeds/fails/finishes
-(`ProcessDefinition.notifications`). The engine stays pure: it knows nothing about email, so
-`api.py` composes this like everything else — the started event fires from the `on_update`
-callback (the first time the engine reports the instance), terminal events after `engine.run`
-returns.
+(`ProcessDefinition.notifications`). `engine.py` stays pure: it knows nothing about email, so
+whoever ran the process composes this — the started event fires from the `on_update` callback
+(the first time the engine reports the instance), terminal events after `engine.run` returns.
+`worker.py` sends them for the run it claimed, which is every run. The API sends exactly one
+kind — the end of a run cancelled while it was still queued or paused, because that run ends
+*there* and no engine ever touched it (`_notify` in `app.py`). This module lives in **core**
+rather than with the engine because both tiers need it, but the engine host is the half that
+sends the mail for real work.
 
 The non-obvious parts, all of which have tests in `tests/test_notifications.py`:
 
-- **One email per run end.** `event_for()` picks the *most specific* subscribed event, so
+- **One email per run end.** `event_for()` picks the _most specific_ subscribed event, so
   `failed` + `completed` is one message worded for what happened, not two. Add an event to
   `FINISHED_EVENTS` (most specific first) rather than sending from more than one place.
 - **Dispatch snapshots the instance** (`model_copy(deep=True)`) and chains sends per run id.
@@ -275,18 +437,36 @@ The non-obvious parts, all of which have tests in `tests/test_notifications.py`:
   not an email address (local accounts, the `api-token` principal) is dropped from recipients
   rather than handed to the relay.
 - **Delivery never raises.** `Notifier.deliver` logs and returns; the run is already over. The
-  one exception is `send_test`, which raises so *Send test email* can show the relay's own words.
+  one exception is `send_test`, which raises so _Send test email_ can show the relay's own words.
 - The relay is deployment-wide, admin-only to change, and sends over **SMTP or Amazon SES**
   (`provider`); SES goes out as raw MIME so both providers carry the byte-identical message
   built by `build_message`, and blank SES keys fall through to the ambient boto3 chain. Add a
   credential field to `SECRET_FIELDS` and it is Fernet-encrypted in the `settings` row and
-  reported by `public()` only as `<field>_set`. The relay is deliberately *not* shared with the
+  reported by `public()` only as `<field>_set`. The relay is deliberately _not_ shared with the
   `send_email_*` plugins: a step sends mail as part of the work, a notification reports on it.
 
 ## Ops reference
 
-`docs/runbook.html` is the self-contained operations runbook (COM/Excel constraints, SMTP
-notes, troubleshooting). Update it when changing plugins or operational behaviour.
+`docs/` holds four self-contained HTML handbooks — no build step, no external assets, readable
+straight off disk, cross-linked by bare filename. `architecture.html` is the building blocks in
+diagrams (the three distributions, the plugin seam, what crosses the database, the life of a run
+and of a preview) and is where a new developer starts; `runbook.html` is operations (the
+Linux/Windows split, every env var, what to back up, COM/Excel constraints, mail,
+troubleshooting); `developer-guide.html` is the Plugin contract in full and where a contributor
+is sent; `guided-tour.html` is the end-user walkthrough. Update the runbook when changing
+plugins or operational behaviour, the developer guide when the plugin contract moves, and the
+architecture doc when a module changes packages or a box on one of those diagrams moves.
+
+`GET /api/health` is the one unauthenticated liveness route (the container's HEALTHCHECK and any
+proxy in front of it hold no credential). It answers `{"status": "ok"}` and deliberately nothing
+else — mode, worker count and queue depth are `/api/queue`, behind the bearer token.
+
+The container is `Dockerfile` + `deploy/nginx.conf` + `deploy/supervisord.conf`: nginx serves
+`designer/dist` and proxies `/api`, `/help` and the OpenAPI UI to uvicorn beside it, both under
+supervisord, as an unprivileged user on port 8080. Everything written at runtime (the SQLite
+fallback, the generated auth token and Fernet key) lands in the `/data` volume — losing the key
+makes stored secrets unreadable. It installs `process_engine_core[mysql]` and
+`process_engine_api` — and not `process_engine`, which is why nothing can execute there.
 
 `docs/guided-tour.html` is the end-user walkthrough (build → publish → schedule → read runs).
 Its in-app counterpart is `tour.js` + `components/Tour.jsx`: an ordered list of cards, each

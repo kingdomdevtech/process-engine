@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AlertCircle, Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
 
-import { api, setToken, setUser } from '../api.js'
+import { API_BASE, api, engineUrl, setToken, setUser } from '../api.js'
 import { brand } from '../brand.js'
 import { LogoMark } from '../components/Logo.jsx'
 import ThemeToggle from '../components/ThemeToggle.jsx'
@@ -33,12 +33,27 @@ export default function Login({ initialError = '' }) {
   const [tokenValue, setTokenValue] = useState('')
   const [reveal, setReveal] = useState(false)
   const [providers, setProviders] = useState([])
+  const [unreachable, setUnreachable] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(initialError)
   const navigate = useNavigate()
 
+  // Which providers to offer is the engine's answer, so this probe doubles as a
+  // reachability check — and it must, because when the designer is deployed
+  // apart from the engine a wrong VITE_API_BASE looks exactly like "SSO is not
+  // configured": no buttons, no explanation, until a sign-in finally fails. A
+  // rejection with no HTTP status never reached the engine at all.
   useEffect(() => {
-    api.get('/api/auth/sso').then(setProviders).catch(() => setProviders([]))
+    api
+      .get('/api/auth/sso')
+      .then((list) => {
+        setProviders(list)
+        setUnreachable(false)
+      })
+      .catch((err) => {
+        setProviders([])
+        setUnreachable(err.status === undefined)
+      })
   }, [])
 
   const submit = async (event) => {
@@ -88,7 +103,7 @@ export default function Login({ initialError = '' }) {
                   type="button"
                   className="btn w-full"
                   onClick={() => {
-                    window.location.href = `/api/auth/sso/${provider.key}/login`
+                    window.location.href = engineUrl(`/api/auth/sso/${provider.key}/login`)
                   }}
                 >
                   {PROVIDER_ICONS[provider.key]} Continue with {provider.name}
@@ -96,6 +111,20 @@ export default function Login({ initialError = '' }) {
               ))}
               <div className="divider-text py-2">or</div>
             </div>
+          )}
+
+          {unreachable && (
+            <p
+              role="alert"
+              className="mt-5 flex items-start gap-2 rounded-md border border-warn-fg/30 bg-warn-bg px-3 py-2 text-xs text-warn-fg"
+            >
+              <AlertCircle size={14} className="mt-px shrink-0" aria-hidden="true" />
+              <span>
+                Cannot reach the engine{API_BASE ? ' at ' : ''}
+                {API_BASE && <code className="code">{API_BASE}</code>}. Sign-in options cannot be loaded until it
+                answers.
+              </span>
+            </p>
           )}
 
           {/* role="alert" so the failure is announced, not just shown */}

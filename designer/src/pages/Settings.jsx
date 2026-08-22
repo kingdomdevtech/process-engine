@@ -5,6 +5,7 @@ import {
   Puzzle,
   Search,
   Send,
+  Server,
   Shield,
   Trash2,
   UserPlus,
@@ -72,6 +73,88 @@ function FilesSection() {
         Changing it is a server-side decision on purpose: set{' '}
         <code className="code">{info.env_var ?? 'PROCESS_ENGINE_WORK_DIR'}</code> before starting the API, so
         nobody signed in here can widen what their steps are allowed to touch.
+      </p>
+    </section>
+  )
+}
+
+/* ---- execution ----------------------------------------------------------- */
+
+/** Where the engine's work happens — always elsewhere — and who is listening. */
+function ExecutionSection() {
+  const [status, setStatus] = useState(null)
+  const [workers, setWorkers] = useState([])
+
+  useEffect(() => {
+    const load = () => {
+      api.get('/api/queue').then(setStatus).catch(() => setStatus({}))
+      api.get('/api/workers').then(setWorkers).catch(() => setWorkers([]))
+    }
+    load()
+    const timer = setInterval(load, 5000) // a worker starting or dying should show
+    return () => clearInterval(timer)
+  }, [])
+
+  if (status === null) return <div className="skeleton h-40" />
+
+  return (
+    <section className="card p-5">
+      <div className="flex items-start gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-info-bg text-info-fg" aria-hidden="true">
+          <Server size={17} />
+        </span>
+        <div>
+          <h3 className="text-sm font-semibold">Execution</h3>
+          <p className="mt-1 max-w-prose text-[13px] text-fg-muted">
+            Nothing executes on this host. Runs and step previews are queued through the database and claimed by
+            engines elsewhere — which is how steps that need Windows (Excel) run while this server is on Linux.
+          </p>
+        </div>
+      </div>
+
+      <dl className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-[10rem_1fr]">
+        <dt className="label">Engines</dt>
+        <dd className="flex flex-wrap items-center gap-1.5">
+          <span className={`badge ${workers.length ? 'bg-ok-bg text-ok-fg' : 'bg-bad-bg text-bad-fg'}`}>
+            {workers.length ? `${workers.length} online` : 'None online'}
+          </span>
+          {!workers.length && (
+            <span className="text-[13px] text-fg-muted">
+              Nothing can run. Start an engine with <code className="code">python -m process_engine</code> on the host
+              that has the plugins&rsquo; dependencies, pointed at this database.
+            </span>
+          )}
+        </dd>
+        <dt className="label">Queued</dt>
+        <dd className="text-[13px] tabular">{status.queued ?? 0}</dd>
+      </dl>
+
+      {workers.length > 0 && (
+        <div className="mt-4 overflow-x-auto border-t border-line pt-4">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Host</th>
+                <th className="w-40">Worker</th>
+                <th className="w-40">Last seen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workers.map((worker) => (
+                <tr key={worker.worker_id}>
+                  <td className="font-medium">{worker.hostname || '—'}</td>
+                  <td className="font-mono text-[12px] text-fg-muted">{worker.worker_id}</td>
+                  <td className="text-[13px] text-fg-muted">{new Date(worker.last_seen).toLocaleTimeString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="mt-4 border-t border-line pt-4 text-[13px] text-fg-muted">
+        There is nothing to switch on here. An engine is a separate install pointed at the same database, so which
+        host runs the work is a deployment decision — not something anyone signed in here can move.
       </p>
     </section>
   )
@@ -631,8 +714,8 @@ function PluginsSection() {
           <div>
             <h3 className="text-sm font-semibold">Installed plugins</h3>
             <p className="mt-1 max-w-prose text-[13px] text-fg-muted">
-              {plugins.length} available. Add your own as a drop-in Python file or a pip package — they appear here
-              after a restart.
+              {plugins.length} available. A new one is added to the engine's source and ships with it — this list is
+              read at startup, so it changes when the API and the engines are restarted.
             </p>
           </div>
         </div>
@@ -717,6 +800,7 @@ function PluginsSection() {
  */
 const TABS = [
   { key: 'notifications', label: 'Notifications', icon: Bell },
+  { key: 'execution', label: 'Execution', icon: Server },
   { key: 'files', label: 'Files', icon: FolderTree },
   { key: 'users', label: 'Users', icon: UsersIcon },
   { key: 'plugins', label: 'Plugins', icon: Puzzle },
@@ -779,6 +863,7 @@ export default function Settings() {
       </div>
 
       {tab === 'notifications' && <NotificationsSection />}
+      {tab === 'execution' && <ExecutionSection />}
       {tab === 'files' && <FilesSection />}
       {tab === 'users' && <UsersSection />}
       {tab === 'plugins' && <PluginsSection />}

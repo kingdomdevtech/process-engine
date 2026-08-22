@@ -15,15 +15,14 @@ from pydantic import ValidationError
 from process_engine.plugins._mysql import MySQLConnection
 from process_engine.plugins.mysql_execute import MySQLExecuteConfig
 from process_engine.plugins.send_email import SendEmailConfig
-from process_engine.registry import PluginRegistry
-from process_engine.ui import WIDGETS, ui
+from process_engine_core.registry import spec_registry
+from process_engine_core.ui import WIDGETS, ui
 
 LIST_WIDGETS = {"tags", "emails", "files"}
 
 
 def schemas():
-    registry = PluginRegistry()
-    registry.load_builtins()
+    registry = spec_registry()
     for plugin_cls in registry:
         yield plugin_cls.manifest.key, plugin_cls.Config.model_json_schema()
 

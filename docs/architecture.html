@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Process Engine — Architecture</title>
+<style>
+  /* Values mirror the designer's palette (designer/src/styles.css) so this page
+     looks like the product it documents, and like its sibling handbooks.
+     Three of those hues do semantic duty in every figure:
+       --api  the authoring tier (designer + API)
+       --eng  the execution tier (engine hosts)
+       --ch   the shared database — the one thing both halves touch */
+  :root {
+    --ink: #151b25; --muted: #4e5662; --line: #d6d9de;
+    --accent: #1468bf; --bg: #ffffff; --bg-soft: #f3f5f8; --code-bg: #e6eaef;
+    --ok: #137d41; --warn: #955e00; --bad: #bc272c;
+    --api: #1468bf; --eng: #137d41; --ch: #955e00;
+    --tint-api: rgba(20, 104, 191, .07);
+    --tint-eng: rgba(19, 125, 65, .07);
+    --tint-ch: rgba(149, 94, 0, .09);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6eaf1; --muted: #98a3b2; --line: #2b333f;
+      --accent: #5aa9f5; --bg: #12161d; --bg-soft: #181e27; --code-bg: #1d242f;
+      --ok: #43b177; --warn: #d6a03c; --bad: #f0736f;
+      --api: #5aa9f5; --eng: #43b177; --ch: #d6a03c;
+      --tint-api: rgba(90, 169, 245, .10);
+      --tint-eng: rgba(67, 177, 119, .10);
+      --tint-ch: rgba(214, 160, 60, .12);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e6eaf1; --muted: #98a3b2; --line: #2b333f;
+    --accent: #5aa9f5; --bg: #12161d; --bg-soft: #181e27; --code-bg: #1d242f;
+    --ok: #43b177; --warn: #d6a03c; --bad: #f0736f;
+    --api: #5aa9f5; --eng: #43b177; --ch: #d6a03c;
+    --tint-api: rgba(90, 169, 245, .10);
+    --tint-eng: rgba(67, 177, 119, .10);
+    --tint-ch: rgba(214, 160, 60, .12);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 96px; }
+  header.doc { border-bottom: 3px solid var(--accent); padding-bottom: 16px; margin-bottom: 24px; }
+  header.doc h1 { margin: 0 0 4px; font-size: 30px; text-wrap: balance; }
+  header.doc p { margin: 0; color: var(--muted); }
+  nav.toc {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 18px; margin-bottom: 32px;
+  }
+  nav.toc strong { display: block; margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 40px; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  a { color: var(--accent); }
+  a:focus-visible, nav.toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  h2 { font-size: 21px; margin: 40px 0 12px; padding-top: 12px; border-top: 1px solid var(--line); text-wrap: balance; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  p { max-width: 68ch; }
+  code, pre { font-family: Consolas, "Cascadia Code", monospace; font-size: 13px; background: var(--code-bg); border-radius: 4px; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  td code { font-size: 12.5px; }
+  .callout { border-left: 4px solid var(--accent); background: var(--bg-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+  .callout p { margin: 0; max-width: none; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .lead { font-size: 16px; color: var(--muted); max-width: 70ch; }
+  .chapter { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 -6px; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+  .yes { color: var(--ok); font-weight: 700; }
+  .no { color: var(--bad); font-weight: 700; }
+  .key { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted); }
+  .key li { display: flex; align-items: center; gap: 7px; }
+  .key i { width: 13px; height: 13px; border-radius: 3px; border: 1.5px solid; display: inline-block; }
+  .key .k-api { border-color: var(--api); background: var(--tint-api); }
+  .key .k-eng { border-color: var(--eng); background: var(--tint-eng); }
+  .key .k-ch { border-color: var(--ch); background: var(--tint-ch); }
+
+  /* Figures ---------------------------------------------------------------- */
+  figure { margin: 22px 0; }
+  figure .frame {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+  figcaption { margin-top: 8px; font-size: 13px; color: var(--muted); max-width: 78ch; }
+  figcaption b { color: var(--ink); font-weight: 600; }
+  svg.fig { display: block; width: 100%; min-width: 620px; height: auto; color: var(--ink); }
+  .fig text { fill: var(--ink); font-family: "Segoe UI", system-ui, sans-serif; font-size: 12px; }
+  .fig .t { font-weight: 700; font-size: 13px; }
+  .fig .s { fill: var(--muted); font-size: 10.5px; }
+  .fig .m { font-family: Consolas, "Cascadia Code", monospace; font-size: 10.5px; }
+  .fig .ms { font-family: Consolas, "Cascadia Code", monospace; font-size: 10px; fill: var(--muted); }
+  .fig rect.b { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+  .fig rect.api { stroke: var(--api); fill: var(--tint-api); }
+  .fig rect.eng { stroke: var(--eng); fill: var(--tint-eng); }
+  .fig rect.ch { stroke: var(--ch); fill: var(--tint-ch); }
+  .fig line, .fig path.c, .fig polyline { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+  .fig line.hair { stroke: var(--line); stroke-width: 1; }
+  .fig .dash { stroke-dasharray: 5 4; }
+  .fig .bad { stroke: var(--bad); }
+  .fig .badf { fill: var(--bad); }
+  .fig .ghost { opacity: .42; }
+  .fig marker path { fill: var(--muted); stroke: none; }
+  .fig circle.dot { fill: var(--muted); stroke: none; }
+
+  @media print { nav.toc ol { columns: 1; } .wrap { padding: 0; } svg.fig { min-width: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Process Engine — Architecture</h1>
+  <p>The building blocks, and the one rule that shapes all of them &nbsp;·&nbsp; v0.1.0 &nbsp;·&nbsp; last updated 2026-08-22</p>
+</header>
+
+<p class="lead">This product is two deployments that never speak to each other. The designer and
+its API run in a Linux container and can author, validate and queue work but cannot execute a
+single step; engine hosts — a Windows box, for the Excel and COM plugins — execute everything and
+serve no HTTP at all. A shared database is the only channel between them. Almost every structural
+decision in the codebase, down to which distribution a Python module belongs to, follows from
+that.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#overview">The system on one page</a></li>
+    <li><a href="#packages">Three distributions, one direction</a></li>
+    <li><a href="#seam">The plugin seam</a></li>
+    <li><a href="#database">The database is the channel</a></li>
+    <li><a href="#run">Life of a run</a></li>
+    <li><a href="#preview">Life of a preview</a></li>
+    <li><a href="#engine">Inside the engine</a></li>
+    <li><a href="#designer">The designer builds itself</a></li>
+    <li><a href="#change">Where does my change go?</a></li>
+  </ol>
+</nav>
+
+<p class="chapter">Chapter 1</p>
+<h2 id="overview">1. The system on one page</h2>
+
+<p>Five parts. A browser holding the designer; a Linux container serving it; a shared database; one
+or more engine hosts; and whatever the work actually touches — an Excel workbook, a MySQL server,
+an HTTP endpoint, a mail relay.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 400" role="img"
+         aria-label="The designer's browser talks to a Linux container; that container and the Windows engine hosts each talk only to a shared database, never to each other; the engine hosts are the only part that touches Excel, MySQL, HTTP endpoints and mail relays.">
+      <defs>
+        <marker id="a1" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <!-- browser -->
+      <rect class="b api" x="20" y="20" width="220" height="64" rx="8"/>
+      <text class="t" x="34" y="45">Browser</text>
+      <text class="s" x="34" y="62">the designer — React SPA</text>
+      <text class="s" x="34" y="76">session token in localStorage</text>
+
+      <!-- external systems -->
+      <rect class="b" x="740" y="20" width="240" height="64" rx="8"/>
+      <text class="t" x="754" y="45">What the work touches</text>
+      <text class="s" x="754" y="62">Excel/COM · MySQL · HTTP</text>
+      <text class="s" x="754" y="76">S3 · Azure Blob · SMTP/SES</text>
+
+      <!-- linux container -->
+      <rect class="b api" x="20" y="132" width="250" height="196" rx="8"/>
+      <text class="t" x="34" y="155">Linux container</text>
+      <text class="s" x="34" y="170">authors, validates, queues</text>
+      <rect class="b" x="36" y="180" width="218" height="50" rx="6"/>
+      <text class="m" x="48" y="200">nginx</text>
+      <text class="s" x="48" y="216">serves designer/dist, proxies /api</text>
+      <rect class="b" x="36" y="242" width="218" height="70" rx="6"/>
+      <text class="m" x="48" y="262">uvicorn → process_engine_api</text>
+      <text class="s" x="48" y="278">routes, auth, sharing, secrets</text>
+      <text class="s" x="48" y="296">executes nothing — see §2</text>
+
+      <!-- database -->
+      <rect class="b ch" x="390" y="140" width="230" height="180" rx="8"/>
+      <text class="t" x="505" y="166" text-anchor="middle">Shared database</text>
+      <text class="s" x="505" y="184" text-anchor="middle">MySQL / Postgres · SQLite in dev</text>
+      <line class="hair" x1="406" y1="198" x2="604" y2="198"/>
+      <text class="ms" x="505" y="220" text-anchor="middle">processes · process_versions</text>
+      <text class="ms" x="505" y="238" text-anchor="middle">process_instances</text>
+      <text class="ms" x="505" y="256" text-anchor="middle">job_queue · run_signals</text>
+      <text class="ms" x="505" y="274" text-anchor="middle">schedule_state · workers</text>
+      <text class="ms" x="505" y="292" text-anchor="middle">secrets · settings · users</text>
+
+      <!-- engine host -->
+      <rect class="b eng" x="740" y="132" width="240" height="196" rx="8"/>
+      <text class="t" x="754" y="155">Windows host</text>
+      <text class="s" x="754" y="170">python -m process_engine</text>
+      <rect class="b" x="756" y="180" width="208" height="44" rx="6"/>
+      <text class="m" x="768" y="198">worker.serve</text>
+      <text class="s" x="768" y="214">claim · lease · heartbeat</text>
+      <rect class="b" x="756" y="232" width="208" height="44" rx="6"/>
+      <text class="m" x="768" y="250">Engine + plugins</text>
+      <text class="s" x="768" y="266">the 15 implementations</text>
+      <rect class="b" x="756" y="284" width="208" height="32" rx="6"/>
+      <text class="m" x="768" y="304">Scheduler — cron lives here</text>
+
+      <!-- browser to container -->
+      <line x1="130" y1="84" x2="130" y2="128" marker-end="url(#a1)"/>
+      <text class="s" x="142" y="110">HTTPS · one origin</text>
+
+      <!-- engine to external -->
+      <line x1="860" y1="132" x2="860" y2="88" marker-end="url(#a1)"/>
+      <text class="s" x="872" y="114">does the work</text>
+
+      <!-- container to db -->
+      <text class="s" x="330" y="202" text-anchor="middle">writes a job</text>
+      <line x1="274" y1="212" x2="386" y2="212" marker-end="url(#a1)"/>
+      <line x1="386" y1="258" x2="274" y2="258" marker-end="url(#a1)"/>
+      <text class="s" x="330" y="276" text-anchor="middle">reads run state</text>
+
+      <!-- db to engine -->
+      <text class="s" x="680" y="202" text-anchor="middle">claims a job</text>
+      <line x1="624" y1="212" x2="736" y2="212" marker-end="url(#a1)"/>
+      <line x1="736" y1="258" x2="624" y2="258" marker-end="url(#a1)"/>
+      <text class="s" x="680" y="276" text-anchor="middle">state · results</text>
+      <text class="s" x="680" y="290" text-anchor="middle">heartbeat</text>
+
+      <!-- the missing edge -->
+      <line class="hair" x1="145" y1="328" x2="145" y2="352"/>
+      <line class="hair" x1="860" y1="328" x2="860" y2="352"/>
+      <line class="dash bad" x1="145" y1="352" x2="860" y2="352"/>
+      <circle cx="502" cy="352" r="13" fill="var(--bg-soft)" class="bad" stroke-width="1.5"/>
+      <text class="badf t" x="502" y="357" text-anchor="middle">✕</text>
+      <text class="s" x="502" y="382" text-anchor="middle">no network path between them, in either direction</text>
+    </svg>
+  </div>
+  <figcaption><b>The database is the whole integration.</b> There is no broker, no callback, and no
+  HTTP hop between the two halves. An engine host needs no inbound port and no route to the
+  container; a firewall that lets it reach the database is the entire network requirement.</figcaption>
+</figure>
+
+<ul class="key">
+  <li><i class="k-api"></i> authoring tier — Linux container</li>
+  <li><i class="k-eng"></i> execution tier — engine hosts</li>
+  <li><i class="k-ch"></i> the shared channel</li>
+</ul>
+
+<p class="chapter">Chapter 2</p>
+<h2 id="packages">2. Three distributions, one direction</h2>
+
+<p>The repository builds three Python packages under <code>packages/</code> plus one npm app under
+<code>designer/</code>. Which package a module lives in is a deployment decision, not a tidiness
+one: it decides which machines have to install it.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 440" role="img"
+         aria-label="process-engine-api and process-engine both depend on process-engine-core, and neither depends on the other; the API distribution contains no engine and no plugin implementations.">
+      <defs>
+        <marker id="a2" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <!-- api -->
+      <rect class="b api" x="30" y="20" width="390" height="158" rx="8"/>
+      <text class="t m" x="46" y="44">process-engine-api</text>
+      <text class="s" x="46" y="60">installed in the Linux container</text>
+      <line class="hair" x1="46" y1="70" x2="404" y2="70"/>
+      <text class="m" x="46" y="90">app.py</text><text class="s" x="132" y="90">every /api route, auth, sharing</text>
+      <text class="m" x="46" y="110">users.py · sso.py</text><text class="s" x="188" y="110">sessions, OIDC</text>
+      <text class="m" x="46" y="130">datapicker.py</text><text class="s" x="150" y="130">what the ƒx picker offers</text>
+      <text class="ms" x="46" y="156">requires: fastapi · uvicorn · httpx</text>
+      <text class="ms" x="46" y="170">no plugin can run here — there is no execute() in the wheel</text>
+
+      <!-- engine -->
+      <rect class="b eng" x="580" y="20" width="390" height="158" rx="8"/>
+      <text class="t m" x="596" y="44">process-engine</text>
+      <text class="s" x="596" y="60">installed on every engine host</text>
+      <line class="hair" x1="596" y1="70" x2="954" y2="70"/>
+      <text class="m" x="596" y="90">engine.py</text><text class="s" x="690" y="90">executes a definition</text>
+      <text class="m" x="596" y="110">worker.py</text><text class="s" x="690" y="110">claims jobs, owns a run end to end</text>
+      <text class="m" x="596" y="130">plugins/ · scheduler.py · expressions.py</text>
+      <text class="ms" x="596" y="156">requires: httpx — plus extras per plugin family</text>
+      <text class="ms" x="596" y="170">excel (pywin32) · mysql · aws · azure, every import lazy</text>
+
+      <!-- forbidden edge -->
+      <line class="dash bad" x1="424" y1="99" x2="576" y2="99"/>
+      <circle cx="500" cy="99" r="13" fill="var(--bg-soft)" class="bad" stroke-width="1.5"/>
+      <text class="badf t" x="500" y="104" text-anchor="middle">✕</text>
+      <text class="s" x="500" y="132" text-anchor="middle">neither depends</text>
+      <text class="s" x="500" y="146" text-anchor="middle">on the other</text>
+
+      <!-- core -->
+      <rect class="b ch" x="150" y="252" width="700" height="168" rx="8"/>
+      <text class="t m" x="170" y="277">process-engine-core</text>
+      <text class="s" x="360" y="277">installed everywhere — what a process <tspan font-style="italic">is</tspan></text>
+      <line class="hair" x1="170" y1="288" x2="830" y2="288"/>
+      <text class="m" x="170" y="308">models.py</text><text class="s" x="262" y="308">the JSON definition</text>
+      <text class="m" x="520" y="308">plugin.py</text><text class="s" x="606" y="308">PluginSpec / Plugin</text>
+      <text class="m" x="170" y="328">storage.py</text><text class="s" x="262" y="328">the ten tables</text>
+      <text class="m" x="520" y="328">registry.py</text><text class="s" x="614" y="328">discovery, aliases</text>
+      <text class="m" x="170" y="348">jobs.py</text><text class="s" x="240" y="348">enqueue run · resume · preview</text>
+      <text class="m" x="520" y="348">validation.py</text><text class="s" x="628" y="348">the DAG rules</text>
+      <text class="m" x="170" y="368">plugins/</text><text class="s" x="248" y="368">manifests + Config, no behaviour</text>
+      <text class="m" x="520" y="368">ui.py</text><text class="s" x="570" y="368">the x-ui form hints</text>
+      <text class="ms" x="170" y="390">secrets_store.py · security.py · workspace.py · urls.py · notifications.py</text>
+      <text class="ms" x="170" y="410">requires: pydantic · sqlalchemy · croniter · cryptography</text>
+
+      <!-- dependency arrows -->
+      <line x1="225" y1="182" x2="290" y2="248" marker-end="url(#a2)"/>
+      <text class="s" x="196" y="222">depends on</text>
+      <line x1="775" y1="182" x2="710" y2="248" marker-end="url(#a2)"/>
+      <text class="s" x="738" y="222">depends on</text>
+    </svg>
+  </div>
+  <figcaption><b>The invariant is enforced by packaging, not by review.</b> The old rule was
+  "<code>process_engine</code> must never import <code>designer_api</code>", checked with a grep.
+  Now the API's distribution simply does not contain an engine or a single plugin implementation,
+  so the container cannot execute a step even by accident — and the same wheel is what makes
+  "no web stack on the engine host" true rather than aspirational.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Distribution</th><th>Answers</th><th>Where it is installed</th></tr>
+  <tr>
+    <td><code>process-engine-core</code></td>
+    <td>What a process <em>is</em> — definitions, storage, the plugin contract, validation, secrets, the queue's payloads</td>
+    <td>Every host. No web framework, no drivers, no COM.</td>
+  </tr>
+  <tr>
+    <td><code>process-engine</code></td>
+    <td>What runs one — the engine, the worker loop, cron, and the plugin implementations</td>
+    <td>Engine hosts. Serves no HTTP in either direction.</td>
+  </tr>
+  <tr>
+    <td><code>process-engine-api</code></td>
+    <td>The designer's backend — routes, auth, sharing, and queueing work for somebody else to do</td>
+    <td>The Linux container. Holds no engine.</td>
+  </tr>
+  <tr>
+    <td><code>designer/</code></td>
+    <td>The canvas itself — React, react-router, @xyflow/react, Tailwind v4</td>
+    <td>Built to static files; nginx serves them.</td>
+  </tr>
+</table>
+
+<p>For development all three go on one machine, and the tests exercise both tiers against a
+throwaway SQLite file:</p>
+
+<pre><code>python -m venv .venv
+.\.venv\Scripts\Activate.ps1                 # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-dev.txt          # all three packages, editable, plus pytest
+
+pytest                                       # the whole suite
+python -m process_engine_api                 # the API on http://127.0.0.1:8000
+python -m process_engine                     # an engine host: claims jobs, fires cron
+cd designer; npm run dev                     # the designer on :5173, proxying /api</code></pre>
+
+<div class="callout warn">
+  <p>Nothing runs until an engine is running. Start <code>python -m process_engine</code> in a
+  second terminal or the Run button will queue work that no one claims — the designer says so
+  rather than spinning, which is what <code>GET /api/queue</code> and the <code>workers</code>
+  table are for.</p>
+</div>
+
+<p class="chapter">Chapter 3</p>
+<h2 id="seam">3. The plugin seam</h2>
+
+<p>A Plugin has always declared three things: a <strong>manifest</strong> (identity, category,
+ports), a <strong>Config</strong> (a pydantic model the step form is generated from), and
+<strong>execute()</strong>. The first two are what a step <em>is</em>, and the designer cannot draw
+a canvas without them. The third is what it <em>does</em>, and only an engine host ever calls it.
+So the class is split down the middle, along exactly the line the deployment is split on.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 300" role="img"
+         aria-label="A plugin's spec — manifest and Config — lives in process-engine-core and is installed on the API host; the runnable class subclasses that spec to add execute and lives in process-engine on the engine hosts.">
+      <defs>
+        <marker id="a3" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <line class="dash hair" x1="500" y1="16" x2="500" y2="284"/>
+      <text class="s" x="500" y="290" text-anchor="middle">the deployment boundary</text>
+
+      <rect class="b api" x="20" y="30" width="440" height="200" rx="8"/>
+      <text class="ms" x="36" y="52">packages/process_engine_core/plugins/http_request.py</text>
+      <line class="hair" x1="36" y1="62" x2="444" y2="62"/>
+      <text class="m" x="36" y="84">class HttpRequestConfig(BaseModel):</text>
+      <text class="ms" x="36" y="100">url, method, headers, auth, timeout_seconds …</text>
+      <text class="m" x="36" y="126">class HttpRequestSpec(PluginSpec):</text>
+      <text class="m" x="54" y="144">manifest = PluginManifest(key="http_request", …)</text>
+      <text class="m" x="54" y="162">Config = HttpRequestConfig</text>
+      <line class="hair" x1="36" y1="180" x2="444" y2="180"/>
+      <text class="s" x="36" y="200">Enough for the palette entry, the whole config form</text>
+      <text class="s" x="36" y="216">and validating a saved definition. Nothing to call.</text>
+
+      <rect class="b eng" x="540" y="30" width="440" height="200" rx="8"/>
+      <text class="ms" x="556" y="52">packages/process_engine/plugins/http_request.py</text>
+      <line class="hair" x1="556" y1="62" x2="964" y2="62"/>
+      <text class="m" x="556" y="84">class HttpRequestPlugin(HttpRequestSpec, Plugin):</text>
+      <text class="m" x="574" y="108">async def execute(self, ctx) -&gt; PluginResult:</text>
+      <text class="ms" x="592" y="126">async with httpx.AsyncClient(…) as client:</text>
+      <text class="ms" x="610" y="142">…</text>
+      <line class="hair" x1="556" y1="180" x2="964" y2="180"/>
+      <text class="s" x="556" y="200">The runnable class <tspan font-style="italic">is</tspan> the spec plus behaviour, so</text>
+      <text class="s" x="556" y="216">the halves cannot disagree about key or Config.</text>
+
+      <line x1="464" y1="120" x2="536" y2="120" marker-end="url(#a3)"/>
+      <text class="s" x="500" y="112" text-anchor="middle">subclasses</text>
+    </svg>
+  </div>
+  <figcaption><b>Two modules, two list entries.</b> The spec goes in
+  <code>BUILTIN_SPECS</code>, the implementation in <code>BUILTIN_PLUGINS</code>. Each tier loads
+  its own list at startup — <code>spec_registry()</code> on the API,
+  <code>default_registry()</code> on an engine — and both are the same
+  <code>PluginRegistry</code>, so every key that appears in the palette is a key some engine can
+  run.</figcaption>
+</figure>
+
+<p>Both registries also load pip packages that publish an entry point in the
+<code>process_engine.plugins</code> group (<code>examples/hello-plugin</code> is the template).
+There is deliberately <strong>no drop-in folder</strong>: a step runs on whichever host claims it,
+so it must never depend on a file somebody left on one of them. Discovery happens at startup only
+— adding a plugin means restarting the API, so it appears in the palette, <em>and</em> every
+engine, so it can run.</p>
+
+<div class="callout bad">
+  <p><strong>Renaming a plugin key breaks every saved definition that uses it.</strong> Add the old
+  key to <code>manifest.aliases</code> instead: aliases resolve in <code>registry.get()</code> but
+  are excluded from <code>manifests()</code>, so retired keys keep working without cluttering the
+  palette.</p>
+</div>
+
+<p class="chapter">Chapter 4</p>
+<h2 id="database">4. The database is the channel</h2>
+
+<p>Definitions and instances are stored as JSON documents with a few extracted columns for listing
+and filtering. Four further tables exist purely so the two hosts can coordinate, and they are the
+only state the halves share beyond the work itself.</p>
+
+<table>
+  <tr><th>Table</th><th>What it holds</th><th>Who writes it</th></tr>
+  <tr><td><code>processes</code></td><td>The editable draft, one row per process. <code>created_by</code> and <code>shared_with</code> are server-owned.</td><td>API</td></tr>
+  <tr><td><code>process_versions</code></td><td>Immutable published snapshots. A run records the version it used, so this must stay immutable.</td><td>API, on publish</td></tr>
+  <tr><td><code>process_instances</code></td><td>One row per run, saved after every step so a restart can resume mid-run.</td><td>Whoever executes — an engine host</td></tr>
+  <tr><td><code>job_queue</code></td><td>Work to claim: a run, a resume, or a preview. The payload carries a snapshot of the definition taken at enqueue time.</td><td>Both — the API on request, an engine when its cron fires</td></tr>
+  <tr><td><code>run_signals</code></td><td>Pause and cancel, crossing the process boundary. The worker polls between steps and clears the row when the run settles.</td><td>API writes, engine clears</td></tr>
+  <tr><td><code>schedule_state</code></td><td>Cron due times. Rolling one forward with a guarded <code>UPDATE</code> is how one engine claims a firing.</td><td>Engine hosts</td></tr>
+  <tr><td><code>workers</code></td><td>A heartbeat per poll. This is the only way the designer can tell "queued behind other work" from "nothing is listening".</td><td>Engine hosts</td></tr>
+  <tr><td><code>secrets</code></td><td>Fernet-encrypted values. The API exposes names only; steps reference <code>{{ secrets.name }}</code>, resolved at execution time.</td><td>API</td></tr>
+  <tr><td><code>settings</code></td><td>Deployment configuration an admin may edit — so far, the mail relay. Anything security-shaped stays env-only.</td><td>API</td></tr>
+  <tr><td><code>users</code></td><td>Accounts and roles (<code>admin</code>, <code>editor</code>). Disabling one revokes its sessions on the next request.</td><td>API</td></tr>
+</table>
+
+<div class="callout bad">
+  <p><code>PROCESS_ENGINE_SECRET_KEY</code> must be byte-identical on both hosts. The API encrypts
+  a secret; an engine on another machine decrypts it at execution time. Different keys and every
+  step that uses a secret fails — and losing the key makes stored secrets unreadable for good.</p>
+</div>
+
+<p>SQLite is fine for a single machine and is what the tests use. Two hosts need a real shared
+server: MySQL or Postgres, via <code>PROCESS_ENGINE_DB_URL</code>. One portability wrinkle worth
+knowing — SQLite reads <code>DateTime(timezone=True)</code> back naive, so anything comparing a
+stored timestamp with <code>utcnow()</code> goes through <code>as_utc()</code> or the comparison
+raises.</p>
+
+<p class="chapter">Chapter 5</p>
+<h2 id="run">5. Life of a run</h2>
+
+<p>Pressing Run in the designer does not run anything. It writes two rows and returns.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 480" role="img"
+         aria-label="Sequence: the designer posts a run to the API; the API writes a PENDING instance and a job row and returns immediately; an engine host claims the job, executes it, saves the instance after every step, sends notifications and finishes the job, while the designer polls the run.">
+      <defs>
+        <marker id="a4" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <rect class="b api" x="20" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="110" y="40" text-anchor="middle">Designer</text>
+      <rect class="b api" x="270" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="360" y="40" text-anchor="middle">API</text>
+      <rect class="b ch" x="520" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="610" y="40" text-anchor="middle">Database</text>
+      <rect class="b eng" x="790" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="880" y="40" text-anchor="middle">Engine host</text>
+
+      <line class="dash hair" x1="110" y1="54" x2="110" y2="452"/>
+      <line class="dash hair" x1="360" y1="54" x2="360" y2="452"/>
+      <line class="dash hair" x1="610" y1="54" x2="610" y2="452"/>
+      <line class="dash hair" x1="880" y1="54" x2="880" y2="452"/>
+
+      <text class="m" x="235" y="86" text-anchor="middle">POST /processes/{id}/run</text>
+      <line x1="110" y1="96" x2="356" y2="96" marker-end="url(#a4)"/>
+
+      <text class="m" x="485" y="128" text-anchor="middle">PENDING instance, then the job row</text>
+      <line x1="360" y1="138" x2="606" y2="138" marker-end="url(#a4)"/>
+      <text class="s" x="485" y="156" text-anchor="middle">a snapshot of the definition, taken now</text>
+
+      <text class="m" x="235" y="186" text-anchor="middle">the queued run, immediately</text>
+      <line x1="356" y1="196" x2="114" y2="196" marker-end="url(#a4)"/>
+      <text class="s" x="235" y="214" text-anchor="middle">visible in the run list before anyone picks it up</text>
+
+      <text class="m" x="745" y="248" text-anchor="middle">claim_job — guarded UPDATE, 300 s lease</text>
+      <line x1="876" y1="258" x2="614" y2="258" marker-end="url(#a4)"/>
+
+      <polyline points="876,282 806,282 806,318 872,318" marker-end="url(#a4)"/>
+      <text class="m" x="798" y="290" text-anchor="end">Engine.run</text>
+      <text class="s" x="798" y="306" text-anchor="end">steps fan out to a thread pool</text>
+
+      <text class="m" x="745" y="346" text-anchor="middle">on_update — the instance, after every step</text>
+      <line x1="876" y1="356" x2="614" y2="356" marker-end="url(#a4)"/>
+
+      <text class="m" x="235" y="386" text-anchor="middle">GET /runs/{id} · polling</text>
+      <line x1="110" y1="396" x2="356" y2="396" marker-end="url(#a4)"/>
+      <line x1="364" y1="396" x2="606" y2="396" marker-end="url(#a4)"/>
+      <text class="s" x="485" y="386" text-anchor="middle">reads what the engine saved</text>
+
+      <text class="m" x="745" y="428" text-anchor="middle">notifications sent · finish_job</text>
+      <line x1="876" y1="438" x2="614" y2="438" marker-end="url(#a4)"/>
+      <text class="s" x="745" y="456" text-anchor="middle">the host that ran it is the host that reports on it</text>
+    </svg>
+  </div>
+  <figcaption><b>Every run is a queued run.</b> There is no inline path left — the Run button, a
+  schedule, a webhook and a resume all take the same route, so the designer needs no special case
+  for "somebody else executed this". The job carries a snapshot of the definition, so editing the
+  draft while it waits cannot change what runs.</figcaption>
+</figure>
+
+<h3>What keeps it honest</h3>
+
+<ul>
+  <li><strong>A worker owns a run end to end</strong> — the engine, per-step persistence, and that
+  run's notifications. Workers are spawned rather than forked, so <code>init_worker</code> rebuilds
+  the whole stack from environment variables alone; that is also what lets the same function run
+  on another machine.</li>
+  <li><strong>A dead worker's claim lapses.</strong> After the lease another worker reclaims the
+  job and replays the persisted instance: steps that already SUCCEEDED are replayed from their
+  recorded outputs rather than re-executed. Side effects are at-least-once, never lost.</li>
+  <li><strong>A slow run must not look like a dead one</strong>, so a daemon thread keeps renewing
+  the claim while the job holds the event loop — the same idea as SQS's
+  <code>ChangeMessageVisibility</code>.</li>
+  <li><strong>Pause and cancel cross the boundary through <code>run_signals</code>.</strong> The
+  API writes the request; the worker polls between steps. A cancel queued before the job starts
+  wins deterministically.</li>
+  <li><strong>Cron belongs to the engine hosts.</strong> <code>create_app</code> starts no
+  scheduler at all, so automation carries on while the container is restarting — or gone. A window
+  nobody was up for is rolled forward and skipped rather than stampeding on start-up.</li>
+  <li><strong>The API's restart sweep skips runs that still have a job row.</strong> This container
+  restarting says nothing about the machine executing that run; a lapsed lease is how a dead one is
+  recovered.</li>
+</ul>
+
+<p class="chapter">Chapter 6</p>
+<h2 id="preview">6. Life of a preview</h2>
+
+<p>The Output tab runs one step against a recorded run's outputs. Since the API cannot execute it
+either, a preview goes through the same queue — but somebody is watching a spinner, so the answer
+has to come back. It is request/reply rather than fire-and-forget.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 330" role="img"
+         aria-label="Sequence: the designer posts a preview, the API queues it and answers 202 with a poll URL, an engine host runs the single step and writes the result into the job row, and the designer's poll collects it.">
+      <defs>
+        <marker id="a5" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <rect class="b api" x="20" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="110" y="40" text-anchor="middle">Designer</text>
+      <rect class="b api" x="270" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="360" y="40" text-anchor="middle">API</text>
+      <rect class="b ch" x="520" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="610" y="40" text-anchor="middle">job_queue</text>
+      <rect class="b eng" x="790" y="16" width="180" height="38" rx="6"/>
+      <text class="t" x="880" y="40" text-anchor="middle">Engine host</text>
+
+      <line class="dash hair" x1="110" y1="54" x2="110" y2="306"/>
+      <line class="dash hair" x1="360" y1="54" x2="360" y2="306"/>
+      <line class="dash hair" x1="610" y1="54" x2="610" y2="306"/>
+      <line class="dash hair" x1="880" y1="54" x2="880" y2="306"/>
+
+      <text class="m" x="235" y="84" text-anchor="middle">POST …/steps/{id}/preview</text>
+      <line x1="110" y1="94" x2="356" y2="94" marker-end="url(#a5)"/>
+
+      <text class="m" x="485" y="122" text-anchor="middle">enqueue_preview — kind="preview"</text>
+      <line x1="360" y1="132" x2="606" y2="132" marker-end="url(#a5)"/>
+      <text class="s" x="485" y="150" text-anchor="middle">validated before it is queued</text>
+
+      <text class="m" x="235" y="180" text-anchor="middle">202 + a poll URL</text>
+      <line x1="356" y1="190" x2="114" y2="190" marker-end="url(#a5)"/>
+
+      <text class="m" x="745" y="220" text-anchor="middle">claim · run the one step · complete_job(result)</text>
+      <line x1="876" y1="230" x2="614" y2="230" marker-end="url(#a5)"/>
+      <text class="s" x="745" y="248" text-anchor="middle">the reply goes into the job row</text>
+
+      <text class="m" x="235" y="278" text-anchor="middle">GET …/previews/{preview_id}</text>
+      <line x1="110" y1="288" x2="356" y2="288" marker-end="url(#a5)"/>
+      <line x1="364" y1="288" x2="606" y2="288" marker-end="url(#a5)"/>
+      <text class="s" x="485" y="278" text-anchor="middle">collected, then finish_job</text>
+    </svg>
+  </div>
+  <figcaption><b>Both paths build the payload with <code>engine.preview_result</code></b>, so the
+  Output tab cannot tell which machine answered. Replies nobody collects are swept by
+  <code>purge_jobs</code> after an hour; the claimable predicate has to keep excluding settled
+  rows, or a delivered reply gets re-claimed and executed again as work.</figcaption>
+</figure>
+
+<div class="callout warn">
+  <p>The plugin really executes. Previewing a step with side effects performs them — the same
+  trade-off n8n makes. Real-run and preview input must stay identical, so both build it through
+  <code>combine_deliveries()</code> / <code>deliveries_from_run()</code>; change those, not one
+  call site.</p>
+</div>
+
+<p class="chapter">Chapter 7</p>
+<h2 id="engine">7. Inside the engine</h2>
+
+<p><code>Engine.run()</code> is pure: it takes a definition, executes it, and returns a
+<code>ProcessInstance</code>. It never touches storage, HTTP or email — persistence, notifications
+and the queue are composed <em>around</em> it by whoever is hosting it. The execution rules are
+short, and one of them surprises everybody once.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 340" role="img"
+         aria-label="A step runs when all its incoming connections are settled; a condition's untaken branch delivers nothing, so that step is skipped and the skip cascades downstream; sibling steps with no connection between them run in parallel; a failed step routes to its error port.">
+      <defs>
+        <marker id="a6" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <circle class="dot" cx="30" cy="150" r="5"/>
+      <text class="s" x="18" y="176">trigger</text>
+      <line x1="38" y1="150" x2="66" y2="150" marker-end="url(#a6)"/>
+
+      <rect class="b" x="70" y="124" width="150" height="52" rx="7"/>
+      <text class="m" x="84" y="146">mysql_query</text>
+      <text class="s" x="84" y="163">rows out</text>
+
+      <rect class="b" x="290" y="44" width="150" height="52" rx="7"/>
+      <text class="m" x="304" y="66">condition</text>
+      <text class="s" x="304" y="83">rows.length &gt; 0</text>
+
+      <rect class="b" x="290" y="228" width="150" height="52" rx="7"/>
+      <text class="m" x="304" y="250">s3_download</text>
+      <text class="s" x="304" y="267">to the sandbox</text>
+
+      <rect class="b" x="530" y="14" width="150" height="52" rx="7"/>
+      <text class="m" x="544" y="36">html_table</text>
+      <rect class="b" x="760" y="14" width="150" height="52" rx="7"/>
+      <text class="m" x="774" y="36">send_email</text>
+
+      <g class="ghost">
+        <rect class="b" x="530" y="112" width="150" height="52" rx="7"/>
+        <text class="m" x="544" y="134">log</text>
+        <rect class="b" x="760" y="112" width="150" height="52" rx="7"/>
+        <text class="m" x="774" y="134">file_purge</text>
+      </g>
+
+      <rect class="b" x="530" y="228" width="150" height="52" rx="7"/>
+      <text class="m" x="544" y="250">send_email</text>
+      <text class="s" x="544" y="267">"the download failed"</text>
+
+      <!-- fan out -->
+      <path class="c" d="M220,140 C255,140 255,70 286,70" marker-end="url(#a6)"/>
+      <path class="c" d="M220,160 C255,160 255,254 286,254" marker-end="url(#a6)"/>
+      <text class="s" x="228" y="200">both ready at once →</text>
+      <text class="s" x="228" y="214">both run, on separate threads</text>
+
+      <!-- condition ports -->
+      <circle class="dot" cx="440" cy="58" r="4"/>
+      <text class="s" x="448" y="50">true</text>
+      <circle class="dot" cx="440" cy="82" r="4"/>
+      <text class="s" x="448" y="100">false</text>
+      <path class="c" d="M444,58 C480,58 490,40 526,40" marker-end="url(#a6)"/>
+      <g class="ghost">
+        <path class="c" d="M444,82 C480,82 490,138 526,138" marker-end="url(#a6)"/>
+        <line x1="684" y1="138" x2="756" y2="138" marker-end="url(#a6)"/>
+      </g>
+      <line x1="684" y1="40" x2="756" y2="40" marker-end="url(#a6)"/>
+
+      <!-- error port -->
+      <circle class="badf" cx="440" cy="254" r="4"/>
+      <text class="s" x="448" y="248">error</text>
+      <line class="bad" x1="444" y1="254" x2="526" y2="254" marker-end="url(#a6)"/>
+
+      <text class="s ghost" x="530" y="184">nothing was delivered → SKIPPED, and the skip cascades downstream</text>
+      <text class="s" x="530" y="300">a step that still fails after its retries routes {error, step} here;</text>
+      <text class="s" x="530" y="316">with nothing connected, the whole run fails instead</text>
+    </svg>
+  </div>
+  <figcaption><b>A step runs when all of its incoming connections are settled</b> — each upstream
+  step either emitted on the connected port or that path is dead. Zero deliveries means SKIPPED,
+  and the skip cascades. Branching depends on this, so a skipped branch is the design working, not
+  a bug to fix.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Rule</th><th>Consequence for your plugin</th></tr>
+  <tr>
+    <td>The graph is a DAG; <code>validate()</code> rejects cycles.</td>
+    <td>Iteration is the <code>for_each</code> plugin, which runs a published sub-process per item through <code>ctx.run_subprocess</code>, depth-capped. Don't add loop edges.</td>
+  </tr>
+  <tr>
+    <td>Ready steps run in parallel, each attempt on its own worker thread.</td>
+    <td>Connections are the only ordering guarantee — never rely on <code>{{ steps.x }}</code> reaching a step that is not upstream of it.</td>
+  </tr>
+  <tr>
+    <td>Blocking work only blocks its own step.</td>
+    <td>Still wrap it in <code>await asyncio.to_thread(...)</code>: a blocked worker thread cannot enforce <code>timeout_seconds</code> until the call returns.</td>
+  </tr>
+  <tr>
+    <td><code>{{ dotted.path }}</code> resolves just before execution, then the result is validated against your <code>Config</code>.</td>
+    <td>Lookups only, never <code>eval</code>. A whole-string expression keeps its type. Scope is <code>{trigger, steps, variables, input, secrets}</code>.</td>
+  </tr>
+  <tr>
+    <td>Failure is a raised exception; the engine owns retries, timeout and error routing.</td>
+    <td>Don't catch and return an error shape — raise, and let the <code>error</code> port do its job.</td>
+  </tr>
+  <tr>
+    <td>Any path from config must go through <code>workspace.resolve()</code>.</td>
+    <td>Never <code>Path(cfg.some_path)</code>. Containment is checked after symlink resolution, and a plugin that walks a tree re-checks every entry it discovers.</td>
+  </tr>
+</table>
+
+<p class="chapter">Chapter 8</p>
+<h2 id="designer">8. The designer builds itself</h2>
+
+<p>There is no per-plugin frontend code, and adding one must never require any. The palette and
+every step form are generated from <code>GET /api/plugins</code> — each manifest plus its
+<code>Config.model_json_schema()</code>.</p>
+
+<figure>
+  <div class="frame">
+    <svg class="fig" viewBox="0 0 1000 230" role="img"
+         aria-label="A plugin's manifest and Config schema are served by GET /api/plugins and drive both the palette entry and the generated config form, whose output is the step config stored in the definition.">
+      <defs>
+        <marker id="a7" viewBox="0 0 9 7" refX="8.5" refY="3.5" markerWidth="8" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L9,3.5 L0,7 z"/>
+        </marker>
+      </defs>
+
+      <rect class="b ch" x="20" y="66" width="210" height="86" rx="8"/>
+      <text class="t m" x="34" y="90">PluginSpec</text>
+      <text class="s" x="34" y="110">manifest — key, ports, category</text>
+      <text class="s" x="34" y="128">Config — a pydantic model</text>
+      <text class="s" x="34" y="144">+ x-ui hints from ui.py</text>
+
+      <rect class="b api" x="290" y="66" width="200" height="86" rx="8"/>
+      <text class="t m" x="304" y="90">GET /api/plugins</text>
+      <text class="s" x="304" y="110">manifest + JSON Schema,</text>
+      <text class="s" x="304" y="128">one entry per installed key</text>
+
+      <rect class="b api" x="560" y="20" width="200" height="62" rx="8"/>
+      <text class="t m" x="574" y="44">Palette.jsx</text>
+      <text class="s" x="574" y="62">icon and tint from pluginMeta</text>
+
+      <rect class="b api" x="560" y="136" width="200" height="72" rx="8"/>
+      <text class="t m" x="574" y="160">SchemaForm.jsx</text>
+      <text class="s" x="574" y="178">one control per field type;</text>
+      <text class="s" x="574" y="194">x-ui adds groups and show_if</text>
+
+      <rect class="b" x="820" y="66" width="160" height="86" rx="8"/>
+      <text class="t m" x="834" y="90">step.config</text>
+      <text class="s" x="834" y="110">plain JSON in the</text>
+      <text class="s" x="834" y="128">saved definition</text>
+
+      <line x1="234" y1="109" x2="286" y2="109" marker-end="url(#a7)"/>
+      <path class="c" d="M494,100 C525,100 525,51 556,51" marker-end="url(#a7)"/>
+      <path class="c" d="M494,118 C525,118 525,172 556,172" marker-end="url(#a7)"/>
+      <path class="c" d="M764,172 C795,172 795,120 816,120" marker-end="url(#a7)"/>
+    </svg>
+  </div>
+  <figcaption><b>A new plugin ships with its own UI.</b> <code>ui.py</code> writes an
+  <code>x-ui</code> object into a field's <code>json_schema_extra</code> — <code>group</code>,
+  <code>advanced</code>, <code>show_if</code>, <code>labels</code>, <code>secret</code>,
+  <code>widget</code> — and the designer reads it without knowing the plugin exists. A bad
+  <code>widget</code> name raises at import, not silently in the browser.</figcaption>
+</figure>
+
+<p>The rest of the frontend is worth knowing in outline. It is a multi-page app —
+<code>/login</code>, an <code>/app</code> dashboard, the <code>/app/processes/:id</code> editor,
+plus runs, secrets and an admin-only settings page. Styling is Tailwind utilities over one semantic
+palette declared twice (light and dark) at the top of <code>styles.css</code>, so
+<code>bg-surface</code> and <code>text-fg-muted</code> retheme themselves and no colour is ever
+written literally in a component. <code>position</code> is designer-owned: a definition built by
+the API or a test has every step at (0,0), and <code>layoutGraph</code> lays those out in
+dependency order on load without writing back.</p>
+
+<div class="callout">
+  <p><strong>Who can see a process.</strong> An admin sees all; anyone else sees what they created
+  plus what is in <code>shared_with</code>, and sharing is flat — a recipient holds it exactly as
+  the creator does, including the right to share it on. Both fields are server-owned. Every read
+  goes through <code>_get_or_404</code> and every listing through <code>_visible_processes</code>;
+  a new <code>/processes/…</code> route that skips them leaks. No access is <strong>404, not
+  403</strong> — a 403 confirms the id belongs to a real process.</p>
+</div>
+
+<p class="chapter">Chapter 9</p>
+<h2 id="change">9. Where does my change go?</h2>
+
+<table>
+  <tr><th>You want to…</th><th>Touch</th><th>And remember</th></tr>
+  <tr>
+    <td>Add a step type</td>
+    <td><code>process_engine_core/plugins/&lt;key&gt;.py</code> (spec) + <code>process_engine/plugins/&lt;key&gt;.py</code> (execute), listed in <code>BUILTIN_SPECS</code> and <code>BUILTIN_PLUGINS</code></td>
+    <td>Zero frontend changes. Restart the API <em>and</em> every engine.</td>
+  </tr>
+  <tr>
+    <td>Change how a step's form looks</td>
+    <td>The <code>Config</code> in the spec — <code>ui()</code> hints, field order, <code>Field(examples=[...])</code></td>
+    <td><code>tests/test_config_forms.py</code> reads the schemas back and fails on a <code>show_if</code> naming a field that no longer exists.</td>
+  </tr>
+  <tr>
+    <td>Change execution semantics</td>
+    <td><code>process_engine/engine.py</code></td>
+    <td>It stays pure — no storage, no HTTP, no email. Compose those around it.</td>
+  </tr>
+  <tr>
+    <td>Add an API route</td>
+    <td><code>process_engine_api/app.py</code></td>
+    <td>Reads go through <code>_get_or_404</code> / <code>_visible_processes</code>. Every <code>/api</code> route needs a bearer credential except login, SSO, <code>/api/health</code> and <code>/api/hooks/*</code>.</td>
+  </tr>
+  <tr>
+    <td>Add a table or column</td>
+    <td><code>process_engine_core/storage.py</code></td>
+    <td>Published versions are immutable — running instances record the version they used.</td>
+  </tr>
+  <tr>
+    <td>Change what crosses between hosts</td>
+    <td><code>process_engine_core/jobs.py</code></td>
+    <td>A claimed job must mean the same thing whichever tier wrote it, which is why the payloads live in core.</td>
+  </tr>
+  <tr>
+    <td>Add a designer screen</td>
+    <td><code>designer/src/pages/</code> + a route in <code>App.jsx</code></td>
+    <td>Register its Ctrl+K entries with <code>useRegisterCommands</code>; the palette lives above the router.</td>
+  </tr>
+  <tr>
+    <td>Change something operational</td>
+    <td>The module <em>and</em> <a href="runbook.html">runbook.html</a></td>
+    <td>Env vars, deployment shapes and troubleshooting live there; the plugin contract lives in <a href="developer-guide.html">developer-guide.html</a>.</td>
+  </tr>
+</table>
+
+<h3>Two questions worth asking before any of it</h3>
+
+<p><strong>"Which hosts have to install this?"</strong> If the answer is "both", the module belongs
+in <code>process-engine-core</code>. That is why <code>urls.py</code>, <code>notifications.py</code>
+and <code>workspace.py</code> live there rather than beside the code that seems to own them — the
+engine host is the half that sends a run's notification email, and the API is the half that reports
+where the sandbox root is.</p>
+
+<p><strong>"Does this let a signed-in user widen what their steps can reach?"</strong> If so it is
+env-only, not a setting. The filesystem sandbox root is the worked example:
+<code>PROCESS_ENGINE_WORK_DIR</code> is read from the environment and
+<code>GET /api/workspace</code> is deliberately read-only.</p>
+
+<footer>
+  Process Engine · architecture.html — part of a set with <a href="developer-guide.html">developer-guide.html</a>
+  (the Plugin contract in full), <a href="runbook.html">runbook.html</a> (deployment, env vars,
+  troubleshooting) and <a href="guided-tour.html">guided-tour.html</a> (the end-user walkthrough).
+</footer>
+
+</div>
+</body>
+</html>

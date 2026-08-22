@@ -6,8 +6,8 @@ applyTo: "**/*.py"
 
 # Python conventions
 
-Python 3.11+, pydantic v2, FastAPI, SQLAlchemy 2.0. No linter or formatter is configured — match
-the file you are editing.
+Python 3.11+, pydantic v2, SQLAlchemy 2.0, FastAPI (in `process-engine-api` only). No linter
+or formatter is configured — match the file you are editing.
 
 - `from __future__ import annotations` where the module already uses it; modern built-in
   generics (`list[str]`, `str | None`), never `typing.List` / `Optional`.
@@ -30,9 +30,22 @@ engine runs each plugin attempt on a worker thread with its own event loop
 
 ## Layering
 
+Three distributions under `packages/`: `process-engine-core` (what a process *is* — models,
+storage, jobs, the plugin contract, `ui`, `workspace`, `urls`, `notifications`, and the plugin
+*specs*), `process-engine` (what runs one — engine, worker, scheduler, expressions, the plugin
+*implementations*) and `process-engine-api` (the designer's backend). Both tiers import core;
+**neither imports the other**, and the API distribution contains no engine at all — that is
+what makes "the container cannot execute a step" a fact about the install rather than a rule
+somebody has to remember. FastAPI and uvicorn belong to the API package; an import of either
+inside `process_engine` or `process_engine_core` breaks the Windows engine host, which installs
+no web stack. Before adding a module, ask **"which hosts have to install this?"** — if the
+answer is "both", it belongs in core.
+
 `engine.py` executes a definition and never imports storage, HTTP, or email. Persistence
-(`on_update=db.save_instance`), scheduling and notifications are wired in `api.py` around a pure
-engine. Keep new cross-cutting behaviour on that seam rather than inside the engine.
+(`on_update=db.save_instance`), scheduling and notifications are wired *around* a pure engine
+by `worker.py`, which owns every run. Keep new cross-cutting behaviour on that seam, and where
+the API needs part of it too, in a function in core that both call (`jobs.enqueue_run`) rather
+than twice.
 
 ## Compatibility
 
