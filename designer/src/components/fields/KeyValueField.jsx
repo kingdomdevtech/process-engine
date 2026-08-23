@@ -123,9 +123,13 @@ export default function KeyValueField({ value, onCommit, spec = {}, hints = {}, 
         </div>
       )}
 
+      {/* The field's own <label htmlFor> lands on this button, which would
+          otherwise name it after the field ("Values") and hide what it does from
+          anyone not looking at it — the visible wording is the accessible name. */}
       <button
         type="button"
         id={id}
+        aria-label={hints.addLabel ?? 'Add'}
         aria-describedby={describedBy}
         className="btn btn-sm"
         onClick={() => setRows([...rows, makeRow('', '')])} // nothing to commit until it has a name

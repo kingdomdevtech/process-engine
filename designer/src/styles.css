@@ -827,6 +827,21 @@
   fill: var(--surface);
 }
 
+/* A floating edge draws its own label (React Flow's SVG one belongs to the
+   built-in edge types), so it needs the same wording the two rules above give
+   those: a port name on the canvas background, not a chip. */
+.pe-edge-label {
+  position: absolute;
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
 .react-flow__controls {
   box-shadow: var(--shadow-md);
   border-radius: var(--radius-lg);

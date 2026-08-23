@@ -174,6 +174,41 @@ async def test_independent_steps_run_in_parallel_threads():
     assert run_of(instance, "b").status == RunStatus.SUCCEEDED
 
 
+async def test_a_skipped_branch_does_not_reach_a_parallel_sibling():
+    """The shape the demo sub-process uses: two steps hang off the trigger and run
+    at once, one of them a condition. Exactly one of its branches is skipped, and
+    the skip must stay on that branch — a cascade that reached the sibling would
+    make the whole thing a chain that happens to look parallel.
+
+    So a healthy run of this graph is 3 succeeded and 1 skipped, which is why the
+    UI gate has to count skips rather than forbid them (see `expectRunPassed`).
+    """
+    # "note" and the taken branch must be inside execute() at the same time, so a
+    # lane that only *looks* parallel leaves "note" waiting until the barrier
+    # breaks and the run fails rather than quietly passing.
+    BlockingRendezvousPlugin.barrier = threading.Barrier(2)
+    definition = ProcessDefinition(
+        steps=[
+            Step(id="note", plugin="blocking_rendezvous"),  # runs beside the condition
+            Step(id="check", name="check", plugin="condition",
+                 config={"left": "{{ trigger.amount }}", "operator": "greater_than", "right": 500}),
+            Step(id="approve", plugin="blocking_rendezvous"),
+            Step(id="reject", plugin="log", config={"message": "on hold"}),
+        ],
+        connections=[
+            Connection(source="check", source_port="true", target="approve"),
+            Connection(source="check", source_port="false", target="reject"),
+        ],
+    )
+    instance = await Engine(make_registry(BlockingRendezvousPlugin)).run(definition, trigger_input={"amount": 900})
+    assert instance.status == RunStatus.SUCCEEDED
+    assert run_of(instance, "note").status == RunStatus.SUCCEEDED
+    assert run_of(instance, "approve").status == RunStatus.SUCCEEDED
+    assert run_of(instance, "reject").status == RunStatus.SKIPPED
+    statuses = [run.status for run in instance.step_runs]
+    assert statuses.count(RunStatus.SKIPPED) == 1
+
+
 async def test_failure_lets_inflight_sibling_finish():
     definition = ProcessDefinition(
         steps=[

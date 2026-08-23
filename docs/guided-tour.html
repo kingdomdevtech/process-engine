@@ -236,9 +236,9 @@ request, not when it expires. Sessions last 12 hours.</p>
   <li><strong>Palette</strong> — every installed plugin, grouped by category and searchable.
       Drag one onto the canvas, or click it to drop it into the middle of the view (dragging is
       not operable by keyboard, so both routes exist).</li>
-  <li><strong>Canvas</strong> — the graph. Drag from a port to another step's left edge to
-      connect them; right-click a step to duplicate or delete it; <kbd>Del</kbd> removes what is
-      selected.</li>
+  <li><strong>Canvas</strong> — the graph. Drag from a port to another step's incoming handle to
+      connect them — its left edge, or its top if the canvas reads top to bottom; right-click a
+      step to duplicate or delete it; <kbd>Del</kbd> removes what is selected.</li>
   <li><strong>Inspector</strong> — context-sensitive. With nothing selected it manages how the
       process starts and what it has done lately; select a step and it becomes that step's
       Input / Config / Output tabs.</li>
@@ -450,6 +450,26 @@ to the process rather than a step, a red banner across the top of the canvas.</p
 so a run from last Tuesday can still be read against the definition that produced it. Editing
 afterwards changes the draft only; publish again when you want the change to be live.</p>
 
+<h3>History — getting an earlier version back</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Z</kbd> is only good while the tab is open. The <strong>clock icon</strong>
+in the editor toolbar — <em>History</em> — is the way back after that: every change to the process
+is listed newest first, each showing what it was (<em>Edited</em>, <em>Published</em>,
+<em>Moved</em>, <em>Sharing changed</em>, <em>Restored</em>), when, and who did it. Press
+<em>Restore</em> on an entry and the canvas goes back to how it stood then.</p>
+
+<p>Four things to expect from it:</p>
+<ul>
+  <li>Restoring changes the <strong>draft</strong> and nothing else. Whatever is published keeps
+      running until you publish the restored version yourself — so you can restore, look at it, and
+      change your mind.</li>
+  <li>Nothing is lost by restoring. The restore is itself an entry in the list, so the version you
+      restored <em>away from</em> is still there; restore the entry above it to undo.</li>
+  <li>A sharing change says <em>no snapshot</em> instead of offering <em>Restore</em> — it did not
+      alter the process, only who can see it, so there is nothing to put back.</li>
+  <li>The history belongs to the process: whoever can open it can read and restore it, and deleting
+      the process deletes its history too.</li>
+</ul>
+
 <p class="chapter">Chapter 9</p>
 <h2 id="triggers">9. Making it run by itself</h2>
 
@@ -631,6 +651,15 @@ opinion.</p>
   tab before you run it.
 </div>
 
+<p><b>There is a worked example on your own install.</b> If someone has run the browser tests
+against it, the <code>demo</code> folder holds <em>Demo MySQL orders fan-out</em> and the
+per-order process it runs, <em>Demo review one order</em>: a query reads a table of orders, For
+Each hands each row to the sub-process, and inside it a Condition sends the row to one of two
+update steps depending on its amount — beside a log step that runs at the same time, because two
+steps with nothing between them are not waiting for each other. It builds its own tables, so it is
+safe to run and to take apart. Those processes cannot be deleted while they are in that folder
+(see <a href="#faster">chapter 14</a>).</p>
+
 <p class="chapter">Chapter 13</p>
 <h2 id="secrets">13. Secrets and the file sandbox</h2>
 
@@ -685,11 +714,24 @@ on a dashboard card. The dashboard groups by folder, each group collapsible, wit
 search across names and folders. Processes saved before you started using folders show up under
 <em>Uncategorized</em>.</p>
 
+<p>One folder is special: anything in <strong><code>demo</code></strong> cannot be deleted. Its
+<em>Delete</em> is disabled and says why, and the card is marked <em>protected</em> — these are the
+sample processes shipped for people to look at, and losing one to a stray click during a
+demonstration would be a nuisance. If you do mean it, <em>Move to folder…</em> is right above the
+disabled Delete: move the process out of <code>demo</code> and it deletes like any other.</p>
+
 <h3>Canvas direction</h3>
 <p>The layout menu in the toolbar switches the canvas between left-to-right and top-to-bottom, and
 re-lays the graph when you switch (leaving the old positions would have every arrow doubling
 back). The direction is a preference of your browser, not part of the process — a colleague can
 read the same process the other way round.</p>
+
+<p>The direction decides where <em>Tidy up</em> puts the steps, and nothing more. Each arrow leaves
+whichever side of a card faces the step it is going to, so dragging one step out to the side of
+another does not leave an arrow looping back to the wrong edge, and a big process can read left to
+right down its spine with a branch hanging below it. Where a step has more than one way out — a
+Condition's <em>true</em> and <em>false</em> — the arrows fan out along that edge in the order the
+ports are listed, so the two branches stay easy to tell apart.</p>
 
 <h3>Theme</h3>
 <p>Light, dark, or follow the operating system. Set it in the account menu at the bottom of the
@@ -773,6 +815,9 @@ installable, and testing — is in the companion document
   <tr><td>I cannot add users.</td><td>That needs the <code>admin</code> role. Sign in with the API token if you are locked out.</td></tr>
   <tr><td>Everything returns 401.</td><td>Sessions last 12 hours; sign in again. If a user was disabled, their sessions stop working immediately.</td></tr>
   <tr><td>I lost <code>.process_engine_key</code>.</td><td>Stored secrets cannot be decrypted. Re-enter them; nothing else is affected.</td></tr>
+  <tr><td>I saved over something that worked.</td><td>Open <em>History</em> (the clock in the editor toolbar) and restore the entry before the bad save. It comes back as a draft, so nothing live changes until you publish — see <a href="#publish">chapter 8</a>.</td></tr>
+  <tr><td><em>Delete</em> is greyed out on a process.</td><td>It is in the protected <code>demo</code> folder. Use <em>Move to folder…</em> just above it, then delete — see <a href="#faster">chapter 14</a>.</td></tr>
+  <tr><td>An arrow leaves the side of a step, not the bottom.</td><td>Intended: arrows point out of whichever edge faces the step they go to. The layout menu decides where <em>Tidy up</em> places steps, not which way the arrows leave.</td></tr>
 </table>
 
 <h3>Where next</h3>

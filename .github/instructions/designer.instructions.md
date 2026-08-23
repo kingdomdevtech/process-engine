@@ -53,16 +53,27 @@ keeps light and dark in sync and makes a rebrand one edit.
 
 ## Canvas
 
-- Edge `sourceHandle` becomes `Connection.source_port`.
+- Edge `sourceHandle` becomes `Connection.source_port`. Every arrow the editor draws for you
+  goes through `flowEdge(source, target, port)`, taking the port from `defaultPort(node)` — the
+  step's `main` where it has one, otherwise the first thing it emits. Never assume `main`: a
+  Condition has only `true`/`false`, and `validate()` rejects a connection on a port the
+  manifest does not declare, so the editor would have authored a save that cannot be published.
 - `position` is designer-owned, so a definition built by the API or a test has every step at
   (0,0). `layoutGraph` in `layout.js` lays those out in dependency order on load (`needsLayout`
   gates it) **without writing back**. The same function backs *Tidy up steps* (Ctrl+Shift+L),
   which does write positions and is undoable.
 - `layout.js` also owns canvas orientation (`horizontal | vertical`, stored in `pe_canvas_dir`)
-  — a per-browser preference, deliberately not part of the definition. `StepNode.jsx` reads it
-  to move handles between the sides and the top/bottom; moving a handle needs
-  `useUpdateNodeInternals` or the edges keep their old anchors. Flipping direction re-runs the
-  layout, since old positions leave every edge doubling back.
+  — a per-browser preference, deliberately not part of the definition — and it decides **where
+  the layout puts things, and nothing else**. Flipping direction re-runs the layout, since old
+  positions no longer read as a flow.
+- **Arrows follow the geometry, not the orientation.** `FloatingEdge.jsx` picks the two borders
+  that face each other per edge (`facingSides`, judged against the cards' own size), so one
+  canvas can be wired left-to-right and top-to-bottom at the same time and a hand-placed step
+  is never left with an arrow doubling back to the wrong face of it. A source with several
+  ports spreads its arrows along that border in port order, so a Condition's branches stay
+  tellable apart. `StepNode.jsx` still moves its *handles* — where a connection is dragged
+  from — with the orientation, and that needs `useUpdateNodeInternals` or React Flow keeps the
+  old anchors and refuses to draw an edge whose handle has no known position.
 - **The graph the editor holds is not the graph it draws.** A step with nothing upstream is
   the one the engine hands the trigger payload to, so the arrow from the trigger box is
   derived from that (`rootIds` → `canvasEdges` in `Editor.jsx`), never stored: it survives a
@@ -79,10 +90,17 @@ keeps light and dark in sync and makes a rebrand one edit.
   authority on what is selected.
 - `StepInput`'s source select **edits** the graph rather than shadowing it — picking a step
   re-points the incoming arrow (`connectFrom`), and only steps this one cannot already reach
-  are offered, since an arrow back would be a cycle. A published *process* is offered only for
-  a step that can take one (`for_each`) and is wired by writing `process_id`, leaving the
-  incoming arrow alone.
+  are offered, since an arrow back would be a cycle. A branching step is offered once per
+  branch (`step:<id>:<port>`, labelled `check amount (true)`), because "after the check" is not
+  an answer the graph can hold. A published *process* is offered only for a step that can take
+  one (`for_each`) and is wired by writing `process_id`, leaving the incoming arrow alone.
 - Undo/redo covers canvas *structure* only (drop / connect / delete / drag), by design.
+  `HistoryDialog.jsx` behind the toolbar's History button is the way back once the tab has been
+  closed — every save is a `process_audits` entry, and one carrying a snapshot can be restored.
+- The dashboard reads `protected` off each process row: a process in the `demo` folder shows a
+  *protected* badge and a disabled Delete naming the folder, with *Move to folder…* enabled
+  right above it. Never hard-code the folder list here — the API decides and reports it, and the
+  API refuses the delete (409) whatever this menu offers.
 - Validation badges come from client-side required-field checks plus `/validate`'s
   `detailed[].step_id`: step-level issues badge the node, process-level ones surface in a
   banner over the canvas.
@@ -116,17 +134,24 @@ never calls `/api/...` from inside the page. The API token is read in Node by `a
 Three gates are **mandatory**, and a green report without them is not a pass. Use the helpers
 in `tests/support/designer.js`:
 
-- `expectRunPassed(page, steps)` — no failed step and **no skipped step**. A skipped step still
-  reports a successful run, so checking only the run badge passes while half the process never
-  ran: the gate is `Steps · n/n` with Succeeded as the only status badge.
+- `expectRunPassed(page, steps, { skipped })` — no failed step, and `Steps · n/n` counting only
+  the succeeded ones. A skipped step still reports a *successful* run, so checking the run badge
+  alone passes while half the process never ran. A Condition's untaken branch is the one honest
+  skip: declare it and the count is checked exactly, never merely tolerated.
 - `expectNoDisconnectedStep(page)` — before every save and after the run. Assert per step id
   with a retrying `toHaveCount`, never one `evaluateAll` snapshot: the canvas re-renders as the
   editor works and a snapshot between two renders reports a graph that was never on screen.
 - The 60-second per-test ceiling in `playwright.config.js`. A slow UI spec is a bug report
   (an engine not claiming, a wait that is really a hang) — let it fail; never `test.setTimeout`.
+  Split a long flow into two `test()`s in a `test.describe.serial` instead.
 
 Tidy the canvas (Ctrl+Shift+L) before opening a step — palette drops overlap. Address a
 control by role (`getByRole('textbox', { name: 'Query' })`): the **ƒx** button's `aria-label`
-contains the field title, so `getByLabel('<Title>')` matches two elements.
+contains the field title, so `getByLabel('<Title>')` matches two elements. An untyped (`Any`)
+field renders the value editor and commits on **blur** — `fill()` then `blur()`.
+
+`tests/demo/` builds the demo processes: a fixed name in the `demo` folder, deleted and rebuilt
+every run via `removeDemoProcess` (which goes through the folder's 409 guard, and is therefore
+also the test of it), with any data it needs created by a step in the process.
 
 Verify with `cd designer; npm run build` before claiming a frontend change works.

@@ -86,6 +86,34 @@ class ProcessVersionRow(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ProcessAuditRow(Base):
+    """One entry in a process's own history: what changed, who changed it, and
+    the draft as it stood afterwards.
+
+    The snapshot is what makes this more than a log — restoring an entry writes
+    its ``document`` back as the draft, so "revert to how it was on Tuesday" is
+    reading a row rather than reconstructing a diff. Published versions are
+    untouched by that: they are immutable snapshots in ``process_versions`` and
+    a restore never rolls ``latest_version`` back.
+
+    Rows belong to their process and go when it does — this is a history, not a
+    recycle bin. Anything you cannot afford to lose that way is better protected
+    from deletion (see the ``demo`` folder in the API).
+    """
+
+    __tablename__ = "process_audits"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    process_id: Mapped[str] = mapped_column(String(32), index=True)
+    # created | updated | published | shared | moved | restored
+    action: Mapped[str] = mapped_column(String(20))
+    actor: Mapped[str] = mapped_column(String(80), default="")
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    version: Mapped[int] = mapped_column(Integer, default=0)  # latest_version at the time
+    document: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # the draft, for restore
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class InstanceRow(Base):
     __tablename__ = "process_instances"
 
@@ -287,6 +315,8 @@ class Database:
                 return False
             session.delete(row)
             session.execute(delete(ProcessVersionRow).where(ProcessVersionRow.process_id == process_id))
+            # the history belongs to the process, so it goes with it — see ProcessAuditRow
+            session.execute(delete(ProcessAuditRow).where(ProcessAuditRow.process_id == process_id))
             session.commit()
             return True
 
@@ -385,6 +415,74 @@ class Database:
                 stmt = stmt.where(ProcessVersionRow.version == version)
             row = session.scalars(stmt).first()
             return ProcessDefinition.model_validate(row.definition) if row else None
+
+    # -- process history (audit trail, and the snapshot a restore reads) ----------
+
+    @staticmethod
+    def _audit_public(row: ProcessAuditRow) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "process_id": row.process_id,
+            "action": row.action,
+            "actor": row.actor,
+            "summary": row.summary,
+            "version": row.version,
+            "at": iso_utc(row.at),
+            # a listing says whether an entry can be restored without shipping
+            # the whole document to draw the row
+            "restorable": row.document is not None,
+        }
+
+    def record_audit(
+        self,
+        process_id: str,
+        action: str,
+        *,
+        actor: str = "",
+        summary: str = "",
+        document: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Append an entry to a process's history.
+
+        ``document`` is the draft as it stood *after* the change, which is what
+        a later restore writes back. Pass it for anything that changed the
+        definition; leave it out for a change that did not (a share, say).
+        """
+        with Session(self.engine) as session:
+            latest = session.get(ProcessRow, process_id)
+            row = ProcessAuditRow(
+                id=new_id(),
+                process_id=process_id,
+                action=action,
+                actor=actor[:80],
+                summary=summary[:300],
+                version=latest.latest_version if latest is not None else 0,
+                document=document,
+                at=utcnow(),
+            )
+            session.add(row)
+            session.commit()
+            return self._audit_public(row)
+
+    def list_audits(self, process_id: str, limit: int = 60) -> list[dict[str, Any]]:
+        """A process's history, newest first. Metadata only — the snapshots are
+        whole definitions, and a panel listing thirty of them wants none of it."""
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(ProcessAuditRow)
+                .where(ProcessAuditRow.process_id == process_id)
+                .order_by(ProcessAuditRow.at.desc(), ProcessAuditRow.id.desc())
+                .limit(limit)
+            ).all()
+            return [self._audit_public(row) for row in rows]
+
+    def get_audit(self, audit_id: str) -> dict[str, Any] | None:
+        """One entry, snapshot included — what a restore reads."""
+        with Session(self.engine) as session:
+            row = session.get(ProcessAuditRow, audit_id)
+            if row is None:
+                return None
+            return {**self._audit_public(row), "document": row.document}
 
     # -- instances ---------------------------------------------------------------
 

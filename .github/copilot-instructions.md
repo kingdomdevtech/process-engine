@@ -66,6 +66,7 @@ python -m process_engine                     # the engine: claims queued jobs, f
                                              #   nothing runs until this is up
 cd designer; npm run dev                     # designer on :5173, proxies /api and /help to :8000
 cd designer; npm run build                   # verify the frontend compiles
+cd designer; npx playwright test             # UI specs; needs API :8000, an engine, vite :5173
 docker compose up -d --build                 # designer+API container -> :8000
 ```
 
@@ -83,10 +84,11 @@ Three assertions are **mandatory in every UI spec**; a green report without them
 pass. The helpers are in `designer/tests/support/designer.js` — use them rather than writing
 the assertion again.
 
-- `expectRunPassed(page, steps)` — no failed step and **no skipped step**. A step whose
-  upstream delivered nothing is skipped, not failed, and the run still reports success, so
-  checking only the run badge passes while half the process never ran. The gate is
-  `Steps · n/n` with Succeeded as the only status badge; pending or running means the poll
+- `expectRunPassed(page, steps, { skipped })` — no failed step, and `Steps · n/n` counting only
+  the succeeded ones. A step whose upstream delivered nothing is skipped, not failed, and the run
+  still reports success, so checking only the run badge passes while half the process never ran.
+  A Condition's untaken branch is the one honest skip: declare it with `{ skipped: n }` and the
+  count is checked *exactly* — accounted for, never tolerated. Pending or running means the poll
   gave up early.
 - `expectNoDisconnectedStep(page)` — before every save and after the run. Every step is
   reached by the trigger box or another step. Assert it per step id with a retrying
@@ -94,13 +96,22 @@ the assertion again.
   the editor works.
 - Under a minute. `timeout: 60_000` in `playwright.config.js`, 30 s for a queued run. A spec
   that needs longer is reporting a stuck engine or a hanging wait — let it fail. Never raise
-  the ceiling with `test.setTimeout`.
+  the ceiling with `test.setTimeout`; split a long flow into two `test()`s in a
+  `test.describe.serial` so each keeps its own budget.
 
 Read the API token in Node via `authToken()` (env, then `.env`, then `.process_engine_auth`) —
 never hard-code one, never fetch it from the page. Tidy the canvas (Ctrl+Shift+L) before
 opening a step: palette drops overlap. Address controls by role
 (`getByRole('textbox', { name: 'Query' })`) — the **ƒx** button's `aria-label` contains the
-field title, so `getByLabel` matches two elements.
+field title, so `getByLabel` matches two elements. An untyped (`Any`) field renders the value
+editor and commits on **blur** — `fill()` then `blur()`.
+
+`designer/tests/demo/` builds the demo processes. A spec there leaves a real published process
+behind, so it uses a fixed name in the `demo` folder and clears the previous one with
+`removeDemoProcess` — which moves it out of the folder first, because the API refuses to delete
+one that is in it, and is therefore also the test of that guard. Any data the demo needs is
+created by a step **in the process**, never by an API call.
+`.github/prompts/new-ui-test.prompt.md` is the full walkthrough for writing one.
 
 ## Invariants — changing these breaks saved data or the design
 
@@ -115,6 +126,24 @@ field title, so `getByLabel` matches two elements.
 - **Published versions are immutable.** `processes` holds the editable draft only; `publish`
   snapshots into `process_versions` and bumps `latest_version`. Runs record the version they
   used and execute the latest published one unless `draft: true`.
+- **Every change to a process is audited, and a saved draft can be restored.** `process_audits`
+  takes one row per `created | updated | published | shared | moved | restored`, with the actor,
+  a summary and — for the kinds that changed the draft — a snapshot of it. `POST
+  /processes/{id}/restore/{audit_id}` writes that snapshot back as a *new* draft plus a
+  `restored` row: history only ever grows, and restoring never rewrites a published version.
+  Rows are owned by the process and die with it. Write the audit where the change happens, not
+  from the designer — the API is the only thing that can promise the trail is complete.
+- **A connection carries the port the source really emits.** `validate()` rejects a
+  `source_port` the source plugin's manifest does not declare (`error` aside), so anything
+  authoring an arrow — the designer's `flowEdge`/`defaultPort`, a test, a migration — must take
+  the step's `main` where it has one and otherwise its first output. Assuming `main` writes a
+  definition that saves and then cannot be published: a Condition has only `true`/`false`.
+- **A process in the `demo` folder cannot be deleted.** `PROTECTED_FOLDERS` in
+  `process_engine_api/app.py` is the authority; the delete route answers **409** and
+  `_visible_processes` stamps `protected` on each row so the designer can disable its own menu
+  item. Moving it out is deliberately *not* guarded — that is the way out, and it leaves a
+  `moved` audit row saying who did it. Never let the frontend decide which folders are
+  protected, and never work around the guard by deleting the rows directly.
 - **Preview and real runs must build step input identically** — both go through
   `combine_deliveries()` / `deliveries_from_run()`. Change those, never one call site.
   `Engine.preview_step()` really executes the plugin, so previewing a step with side effects

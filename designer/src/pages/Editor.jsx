@@ -20,6 +20,7 @@ import {
   Check,
   CloudUpload,
   Copy,
+  History,
   Loader2,
   MoveDown,
   MoveRight,
@@ -39,6 +40,8 @@ import { layoutGraph, needsLayout, useOrientation } from '../layout.js'
 import { useLeaveGuard } from '../tour.js'
 import { PluginIcon } from '../pluginMeta.jsx'
 import AppShell from '../components/AppShell.jsx'
+import FloatingEdge from '../components/FloatingEdge.jsx'
+import HistoryDialog from '../components/HistoryDialog.jsx'
 import ShareDialog from '../components/ShareDialog.jsx'
 import NotificationsPanel from '../components/NotificationsPanel.jsx'
 import Palette from '../components/Palette.jsx'
@@ -55,8 +58,13 @@ import Menu, { MenuItem, MenuLabel, MenuSeparator } from '../components/ui/Menu.
 import { useDialogs } from '../components/ui/Dialogs.jsx'
 
 const TRIGGER_NODE_ID = '__trigger__'
+/* Every arrow on this canvas floats: it leaves whichever border of the card
+   faces the step it points at, so a step can be wired left-to-right and
+   top-to-bottom on the same canvas (see FloatingEdge.jsx). React Flow merges
+   these options into every edge it draws, including the ones loaded off a saved
+   definition, so this is the one place the edge type is decided. */
 const defaultEdgeOptions = {
-  type: 'smoothstep',
+  type: 'floating',
   markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
 }
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'paused'])
@@ -89,21 +97,42 @@ const LAYOUT_ORIGIN = {
 }
 let stepCounter = 0
 
-/* The plain "and then" arrow: main port to main port. Every connection the
-   editor makes for you is one of these — a new step joining the end of the
-   flow, or the Input tab re-pointing a step at a different source. */
-function mainEdge(source, target) {
+/* The plain "and then" arrow. Every connection the editor makes for you is one
+   of these — a new step joining the end of the flow, or the Input tab
+   re-pointing a step at a different source.
+
+   Which port it leaves from is part of it, because not every step has a `main`
+   one: a Condition emits on `true` or `false` and nothing else, so an arrow off
+   it has to name a branch or `validate()` rejects the save. The port is in the
+   id too, since the same two steps can be joined on either branch. */
+function flowEdge(source, target, port = 'main') {
+  const named = port && port !== 'main'
   return {
-    id: source === TRIGGER_NODE_ID ? `${TRIGGER_NODE_ID}-to-${target}` : `${source}->${target}`,
+    id:
+      source === TRIGGER_NODE_ID
+        ? `${TRIGGER_NODE_ID}-to-${target}`
+        : named
+          ? `${source}:${port}->${target}`
+          : `${source}->${target}`,
     source,
     target,
-    sourceHandle: 'main',
+    sourceHandle: named ? port : 'main',
     targetHandle: 'main',
-    type: 'smoothstep',
+    label: named ? port : undefined,
+    type: 'floating',
     markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
     animated: true,
     style: { stroke: 'var(--line-strong)' },
   }
+}
+
+/* Which port "and then" means for a given step: its main one where it has one,
+   and otherwise the first thing it emits. Assuming `main` on a step that has no
+   such port authored an arrow the save would reject — the editor must never draw
+   a connection that cannot be published. */
+function defaultPort(node) {
+  const ports = node?.data?.outputs ?? []
+  return ports.length === 0 || ports.includes('main') ? 'main' : ports[0]
 }
 
 function placed(positions, direction) {
@@ -148,6 +177,7 @@ function EditorInner() {
   const [createdBy, setCreatedBy] = useState('') // server-owned; shown, never sent
   const [sharedWith, setSharedWith] = useState([]) // ditto — changed only via /share
   const [shareOpen, setShareOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [runs, setRuns] = useState([])
   const [runView, setRunView] = useState(null)
   const [serverIssues, setServerIssues] = useState({ byStep: {}, general: [] })
@@ -165,6 +195,7 @@ function EditorInner() {
   const { orientation, isVertical, setOrientation } = useOrientation()
   const { screenToFlowPosition, deleteElements, getViewport, fitView, setViewport } = useReactFlow()
   const nodeTypes = useMemo(() => ({ step: StepNode, trigger: TriggerNode }), [])
+  const edgeTypes = useMemo(() => ({ floating: FloatingEdge }), [])
   const persistZoom = useCallback((zoom) => {
     try {
       const next = Number.isFinite(zoom) ? Math.min(2.5, Math.max(0.25, zoom)) : DEFAULT_CANVAS_ZOOM
@@ -292,15 +323,18 @@ function EditorInner() {
      is a question about the graph, so the Input tab answering it edits the
      graph rather than shadowing it, and the canvas cannot end up disagreeing
      with the panel. A step takes its work from one place, so the arrow that
-     was there goes; choosing the trigger box means having none at all. */
+     was there goes; choosing the trigger box means having none at all. A
+     branching step is a different source on each of its ports, which is why the
+     port comes along — "the false branch of this check" is the answer, and
+     "this check" on its own is not one the graph could hold. */
   const connectFrom = useCallback(
-    (targetId, sourceId) => {
+    (targetId, sourceId, port = 'main') => {
       record()
       setDirty(true)
       setEdges((eds) => {
         const kept = eds.filter((edge) => edge.target !== targetId)
         if (sourceId === TRIGGER_NODE_ID) return kept
-        return kept.concat(mainEdge(sourceId, targetId))
+        return kept.concat(flowEdge(sourceId, targetId, port))
       })
     },
     [record, setEdges],
@@ -368,9 +402,10 @@ function EditorInner() {
            that fact (see `canvasEdges`). */
         const priorStep = [...nds].reverse().find((node) => node.id !== TRIGGER_NODE_ID && node.type === 'step')
         if (priorStep) {
+          const port = defaultPort(priorStep)
           setEdges((eds) => {
             if (eds.some((edge) => edge.target === nextId)) return eds
-            return eds.concat(mainEdge(priorStep.id, nextId))
+            return eds.concat(flowEdge(priorStep.id, nextId, port))
           })
         }
 
@@ -433,9 +468,9 @@ function EditorInner() {
     else toast.info('Nothing to arrange yet — add a step first')
   }, [arrange, orientation, toast, undo])
 
-  /* Flipping the canvas without moving anything reads as broken: every edge
-     would leave the bottom of one card and climb back up to the top of the
-     next. So the flip re-arranges too — Ctrl+Z puts the old positions back. */
+  /* The direction *is* the layout — it decides nothing else now that the arrows
+     follow the geometry — so flipping it without moving anything would change
+     nothing at all. The flip re-arranges; Ctrl+Z puts the old positions back. */
   const setDirection = useCallback(
     (next) => {
       if (next === orientation) return
@@ -449,9 +484,19 @@ function EditorInner() {
      canvas callback is rebuilt as the graph changes — once per frame while a
      step is being dragged — so the commands reach the current handlers through
      a ref rather than re-registering themselves that often. */
-  const handlers = useRef({ tidy, setDirection, openShare: () => setShareOpen(true) })
+  const handlers = useRef({
+    tidy,
+    setDirection,
+    openShare: () => setShareOpen(true),
+    openHistory: () => setHistoryOpen(true),
+  })
   useEffect(() => {
-    handlers.current = { tidy, setDirection, openShare: () => setShareOpen(true) }
+    handlers.current = {
+      tidy,
+      setDirection,
+      openShare: () => setShareOpen(true),
+      openHistory: () => setHistoryOpen(true),
+    }
   }, [tidy, setDirection])
 
   const commands = useMemo(
@@ -472,6 +517,14 @@ function EditorInner() {
         icon: Share2,
         keywords: 'share people access permission collaborate invite',
         run: () => handlers.current.openShare(),
+      },
+      {
+        id: 'history',
+        group: 'Process',
+        label: 'Show this process’s history',
+        icon: History,
+        keywords: 'history audit revert restore undo previous version changes log',
+        run: () => handlers.current.openHistory(),
       },
       {
         id: 'orientation',
@@ -980,7 +1033,7 @@ function EditorInner() {
   const canvasEdges = useMemo(
     () => [
       ...edges,
-      ...(rootIds ? rootIds.split(' ') : []).map((id) => mainEdge(TRIGGER_NODE_ID, id)),
+      ...(rootIds ? rootIds.split(' ') : []).map((id) => flowEdge(TRIGGER_NODE_ID, id)),
     ],
     [edges, rootIds],
   )
@@ -1023,12 +1076,19 @@ function EditorInner() {
     const downstream = descendantsOf(selectedNode.id)
     return nodes
       .filter((node) => node.id !== selectedNode.id && !downstream.has(node.id))
-      .map((node) => ({ id: node.id, label: node.data.label }))
+      /* The ports come too: a step that branches offers one source per branch,
+         because "after the check" is not something the graph can hold. */
+      .map((node) => ({ id: node.id, label: node.data.label, ports: node.data.outputs ?? [] }))
   }, [nodes, selectedNode, selectedId, descendantsOf])
 
+  /* Which of those the Input tab should be showing — named the way its options
+     are, so the panel is reading the arrow rather than guessing at it. */
   const connectedSource = useMemo(() => {
     if (!selectedNode) return TRIGGER_NODE_ID
-    return edges.find((edge) => edge.target === selectedNode.id)?.source ?? TRIGGER_NODE_ID
+    const incoming = edges.find((edge) => edge.target === selectedNode.id)
+    if (!incoming) return TRIGGER_NODE_ID
+    const port = incoming.sourceHandle || 'main'
+    return port === 'main' ? `step:${incoming.source}` : `step:${incoming.source}:${port}`
   }, [edges, selectedNode])
 
   /* A step that can hand its work to a whole process rather than to the next
@@ -1168,6 +1228,19 @@ function EditorInner() {
           Tidy up steps
         </MenuItem>
       </Menu>
+      {/* Every save is an entry, so this is the way back from one — and the
+          only reason a mis-edit is recoverable after the tab has been closed
+          and undo has gone with it. */}
+      <button
+        className="btn btn-ghost btn-icon"
+        onClick={() => setHistoryOpen(true)}
+        disabled={!processId}
+        title={processId ? 'History — and restore an earlier state' : 'Save it first, then its history is kept'}
+        aria-label="History"
+        data-tour="history"
+      >
+        <History size={15} />
+      </button>
       <button
         className="btn"
         onClick={() => setShareOpen(true)}
@@ -1242,6 +1315,7 @@ function EditorInner() {
                 : decoratedEdges.find((candidate) => candidate.id === edge.id) ?? edge,
             )}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             selection={selectedNodeIds}
             defaultEdgeOptions={defaultEdgeOptions}
             defaultViewport={readStoredViewport()}
@@ -1419,7 +1493,7 @@ function EditorInner() {
                   steps={sourceChoices}
                   processes={otherProcesses}
                   connectedTo={connectedSource}
-                  onConnect={(sourceId) => connectFrom(selectedNode.id, sourceId)}
+                  onConnect={(sourceId, port) => connectFrom(selectedNode.id, sourceId, port)}
                   processField={processField}
                   processValue={selectedNode.data.config?.process_id ?? ''}
                   onPickProcess={(chosen) => {
@@ -1503,6 +1577,16 @@ function EditorInner() {
         open={shareOpen}
         onClose={() => setShareOpen(false)}
         onSaved={(saved) => setSharedWith(saved.shared_with ?? [])}
+      />
+      <HistoryDialog
+        processId={processId}
+        processName={processName}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        /* Re-read the process rather than patch the canvas from the reply: a
+           restore replaces the whole definition, and reloading is also what
+           clears the undo stack, which now describes edits that never happened. */
+        onRestored={() => processId && loadProcess(processId)}
       />
     </AppShell>
   )

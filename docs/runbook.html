@@ -398,13 +398,14 @@ set the two variables explicitly, keep them wherever you keep secrets, and both 
 them by configuration rather than by luck.</p>
 
 <h3>The database</h3>
-<p>Everything else lives in one database. Ten tables, all created automatically on start:</p>
+<p>Everything else lives in one database. Eleven tables, all created automatically on start:</p>
 
 <table>
   <tr><th>Table</th><th>Holds</th></tr>
   <tr><td><code>processes</code></td><td>The editable draft of each process. One row per process.</td></tr>
   <tr><td><code>process_versions</code></td><td>Immutable published snapshots. Triggers and runs use these, never the draft.</td></tr>
   <tr><td><code>process_instances</code></td><td>Run history, including every step's input and output. The largest table by far.</td></tr>
+  <tr><td><code>process_audits</code></td><td>Who changed which process, when, and what it looked like before. One row per create, save, publish, share, folder move or restore, carrying a snapshot of the draft — this is what the editor's <em>History</em> button restores from.</td></tr>
   <tr><td><code>secrets</code></td><td>Fernet-encrypted values. The API only ever exposes names.</td></tr>
   <tr><td><code>users</code></td><td>Accounts, roles and password hashes.</td></tr>
   <tr><td><code>settings</code></td><td>Admin-editable deployment settings — currently only the mail relay.</td></tr>
@@ -421,11 +422,40 @@ them by configuration rather than by luck.</p>
   logical dump makes it smaller and no less complete.
 </div>
 
+<h3>Restoring a process someone broke</h3>
+<p>Open the process, press <strong>History</strong>, pick an entry and restore it. Every save,
+publish, share and folder move is in that list with the person who did it, and the entries that
+changed the draft carry the draft itself. Restoring writes that snapshot back as the current
+<em>draft</em> and adds a <code>restored</code> entry of its own — nothing in the history is
+overwritten, and no published version changes, so the live behaviour of a scheduled process is
+unaffected until somebody publishes. Two consequences worth knowing when someone asks: a restore
+is undone by restoring the entry above it, and access to the history is exactly access to the
+process, so an editor can recover their own work without an admin.</p>
+
+<p>Two things the audit trail does <em>not</em> do. It is per-process, so deleting a process
+deletes its history with it — the database backup is the only way back from that. And it records
+changes to a process, not to users, secrets or settings; those are not versioned.</p>
+
+<h3>A folder whose processes cannot be deleted</h3>
+<p>Anything in the folder named <code>demo</code> is protected: the API refuses the delete with
+<strong>409</strong> and the dashboard shows the Delete item disabled, naming the folder. This is
+for the sample processes the browser tests build, so a demo cannot be lost by a stray click during
+a walkthrough. It is a guard, not a lock — <em>Move to folder…</em> is enabled right above the
+disabled Delete, and once the process is out of <code>demo</code> it deletes normally, leaving a
+<code>moved</code> audit row that says who moved it. The folder list is
+<code>PROTECTED_FOLDERS</code> in <code>process_engine_api/app.py</code>; renaming a folder to
+<code>demo</code> protects it and nothing else needs configuring.</p>
+
 <h3>Run history grows</h3>
 <p><code>process_instances</code> stores each step's real input and output, which is what makes the
 run view and the ƒx picker useful — and what makes it grow fastest. There is no built-in retention
 policy yet; a periodic delete by <code>started_at</code> against the database is the current
 answer. Deleting a run affects nothing but history.</p>
+
+<p><code>process_audits</code> grows the same way for the same reason — it keeps a whole definition
+per save — but far more slowly, since people save a process far less often than it runs. Trim it
+the same way if you ever need to, oldest first and by <code>process_id</code>: each row deleted is
+one draft nobody can restore any more.</p>
 
 <h3>The working directory</h3>
 <p><code>PROCESS_ENGINE_WORK_DIR</code> is the only place file steps may read or write. It is
@@ -718,6 +748,8 @@ way down.</p>
   <tr><td>The container is <code>unhealthy</code>.</td><td><code>docker logs</code> — supervisord reports which of nginx or uvicorn is failing. A database it cannot reach is the usual reason uvicorn will not start.</td></tr>
   <tr><td>Stored secrets became unreadable after a redeploy.</td><td>The <code>/data</code> volume was not mounted, so a new Fernet key was generated. Restore the key, or re-enter the secrets and set <code>PROCESS_ENGINE_SECRET_KEY</code> explicitly this time.</td></tr>
   <tr><td>The database is growing fast.</td><td><code>process_instances</code> keeps every step's input and output. Delete old rows by date; nothing but history depends on them.</td></tr>
+  <tr><td>A process will not delete — the button is disabled, or the API answers 409.</td><td>It is in the <code>demo</code> folder, which is protected on purpose. Use <em>Move to folder…</em> first, then delete. See <a href="#state">chapter 6</a>.</td></tr>
+  <tr><td>Someone saved over a working process.</td><td>Open it, press <strong>History</strong>, restore the entry before the bad save. It comes back as the draft; publish when you have checked it. The trail names who changed what.</td></tr>
 </table>
 
 <h3>Where next</h3>

@@ -15,6 +15,7 @@ import {
   Rows3,
   Search,
   Share2,
+  ShieldCheck,
   Trash2,
   Workflow,
   XCircle,
@@ -135,7 +136,7 @@ export default function Dashboard() {
   const remove = async (process) => {
     const ok = await dialogs.confirm({
       title: `Delete “${process.name}”?`,
-      body: 'This removes the process and every published version of it. Run history for those versions is deleted with them. This cannot be undone.',
+      body: 'This removes the process, every published version of it, and its edit history. Run history for those versions is deleted with them. This cannot be undone.',
       confirmLabel: 'Delete process',
       tone: 'danger',
     })
@@ -224,7 +225,12 @@ export default function Dashboard() {
     <Menu
       label={`Actions for ${process.name}`}
       trigger={
-        <span className="btn btn-ghost btn-icon btn-sm" aria-hidden="true">
+        /* Not aria-hidden: `Menu` renders its trigger button as `display:
+           contents`, so the span is the only thing with a box — hide it and the
+           button has nothing rendered, which drops it out of the accessibility
+           tree altogether and takes every action on a process with it. The name
+           comes from the Menu's own label either way. */
+        <span className="btn btn-ghost btn-icon btn-sm" title="Actions">
           <MoreHorizontal size={15} />
         </span>
       }
@@ -249,8 +255,22 @@ export default function Dashboard() {
         Share…
       </MenuItem>
       <MenuSeparator />
-      <MenuItem icon={<Trash2 size={15} />} danger onClick={() => remove(process)}>
-        Delete
+      {/* A process in a protected folder cannot be deleted, and the API refuses
+          it whatever this menu offers (409). Saying which folder is doing it —
+          and leaving *Move to folder…* right above, enabled — is the difference
+          between a dead end and an instruction. */}
+      <MenuItem
+        icon={process.protected ? <ShieldCheck size={15} /> : <Trash2 size={15} />}
+        danger={!process.protected}
+        disabled={process.protected}
+        title={
+          process.protected
+            ? `Processes in the “${process.folder}” folder are protected. Move it out first.`
+            : undefined
+        }
+        onClick={() => remove(process)}
+      >
+        {process.protected ? `Delete — protected by “${process.folder}”` : 'Delete'}
       </MenuItem>
     </Menu>
   )
@@ -275,6 +295,16 @@ export default function Dashboard() {
       </span>
     )
   }
+
+  /** Protected from deletion by the folder it is in — worth saying on the row,
+      so it is not a surprise waiting inside the menu. */
+  const protectedBadge = (process) =>
+    process.protected ? (
+      <span className="badge gap-1" title={`Processes in “${process.folder}” cannot be deleted`}>
+        <ShieldCheck size={10} aria-hidden="true" />
+        protected
+      </span>
+    ) : null
 
   const versionBadge = (process) =>
     process.latest_version ? (
@@ -308,6 +338,7 @@ export default function Dashboard() {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {versionBadge(process)}
+        {protectedBadge(process)}
         {sharingBadge(process)}
         <span className="text-[11px] text-fg-subtle" title={absoluteTime(process.updated_at)}>
           edited {relativeTime(process.updated_at)}
@@ -343,7 +374,7 @@ export default function Dashboard() {
                 </div>
               </td>
               <td className="whitespace-nowrap">
-                {versionBadge(process)} {sharingBadge(process)}
+                {versionBadge(process)} {protectedBadge(process)} {sharingBadge(process)}
               </td>
               <td className="text-fg-muted" title={absoluteTime(process.updated_at)}>
                 {relativeTime(process.updated_at)}

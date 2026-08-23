@@ -33,9 +33,12 @@ export default function StepNode({ id, data }) {
   const meta = STATUS[status]
   const StatusIcon = meta?.icon
 
-  /* React Flow measures each handle once and caches where it sits, so moving
-     them from the sides to the top and bottom has to be announced — otherwise
-     the edges keep meeting the card at its old anchors. */
+  /* A handle is where a connection is dragged *from* or *to*; where the arrow
+     actually meets the card is the edge's business now (FloatingEdge.jsx picks
+     the border that faces the other step). React Flow still measures each
+     handle once and caches where it sits, and it refuses to draw an edge whose
+     handle has no known position — so moving them from the sides to the top and
+     bottom has to be announced either way. */
   useEffect(() => {
     updateNodeInternals(id)
   }, [id, isVertical, updateNodeInternals])
@@ -74,9 +77,11 @@ export default function StepNode({ id, data }) {
         </div>
       </div>
 
-      {/* Ports line up along whichever edge the connections leave from: stacked
-          down the right in a horizontal canvas, side by side along the bottom
-          in a vertical one. */}
+      {/* Ports line up along whichever edge a laid-out canvas reads towards:
+          stacked down the right when it reads left to right, side by side along
+          the bottom when it reads top to bottom. That is where you drag a
+          connection from — the arrow itself leaves whichever border faces the
+          step it points at, which is not always this one. */}
       <div className={`border-t border-line/70 py-1 ${isVertical ? 'flex justify-around gap-1 px-1' : ''}`}>
         {outputs.map((port) => (
           <div
