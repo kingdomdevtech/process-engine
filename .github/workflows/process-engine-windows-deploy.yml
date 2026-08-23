@@ -1,0 +1,189 @@
+name: Process Engine Desktop Windows Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - staging
+    paths:
+      - "packages/process_engine/**"
+      - "packages/process_engine_core/**"
+      - "pyproject.toml"
+      - "requirements-dev.txt"
+      - ".github/workflows/process-engine-windows-deploy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-bundle:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag based on branch
+        id: vars
+        shell: bash
+        run: |
+          BRANCH="${GITHUB_REF##*/}"
+          if [ "$BRANCH" = "main" ]; then
+            TAG="prod"
+          elif [ "$BRANCH" = "staging" ]; then
+            TAG="staging"
+          else
+            TAG="${BRANCH//\//-}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Python wheels for the engine package
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          mkdir -p dist
+          python -m pip wheel --wheel-dir dist ./packages/process_engine_core
+          python -m pip wheel --wheel-dir dist ./packages/process_engine
+
+      - name: Generate Windows service installer bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The GitHub runner is Ubuntu, but this file is a Windows-targeted installer that
+          # is downloaded and executed later on the desktop Windows server via SSM.
+          cat > install-process-engine.ps1 <<'EOF'
+          $ErrorActionPreference = 'Stop'
+
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $root = "C:\\apps\\releases\\process-engine\\$tag"
+          $wheelDir = Join-Path $root "wheels"
+          $venvDir = Join-Path $root "venv"
+          $logFile = Join-Path $root "install.log"
+
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
+
+          Expand-Archive -Path "C:\\Temp\\process-engine-$tag.zip" -DestinationPath $root -Force
+
+          Copy-Item -Path (Join-Path $root "dist\\*") -Destination $wheelDir -Force
+
+          if (-not (Test-Path $venvDir)) {
+            py -3.11 -m venv $venvDir
+          }
+
+          & (Join-Path $venvDir "Scripts\\python.exe") -m pip install --upgrade pip setuptools wheel
+          & (Join-Path $venvDir "Scripts\\python.exe") -m pip install --no-index --find-links $wheelDir "process-engine-core==0.1.0" "process-engine==0.1.0"
+
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DB_URL', '${{ secrets.PROCESS_ENGINE_DB_URL }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_SECRET_KEY', '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DESIGNER_URL', '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_WORK_DIR', '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\\ProcessEngine\\workdir" }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_STEP_WORKERS', '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_QUEUE_POLL_SECONDS', '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_LOG_LEVEL', '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}', 'Machine')
+
+          $launcher = Join-Path $root "run-process-engine.ps1"
+          @'
+          $ErrorActionPreference = 'Stop'
+          $env:PROCESS_ENGINE_DB_URL = '${{ secrets.PROCESS_ENGINE_DB_URL }}'
+          $env:PROCESS_ENGINE_SECRET_KEY = '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}'
+          $env:PROCESS_ENGINE_DESIGNER_URL = '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}'
+          $env:PROCESS_ENGINE_WORK_DIR = '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\ProcessEngine\workdir" }}'
+          $env:PROCESS_ENGINE_STEP_WORKERS = '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}'
+          $env:PROCESS_ENGINE_QUEUE_POLL_SECONDS = '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}'
+          $env:PROCESS_ENGINE_LOG_LEVEL = '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}'
+          & (Join-Path '${{ vars.PROCESS_ENGINE_VENV_PATH || "C:\\apps\\releases\\process-engine\\" + steps.vars.outputs.tag + "\\venv" }}' 'Scripts\\python.exe') -m process_engine
+          '@ | Set-Content -Path $launcher -Encoding UTF8
+
+          $serviceName = '${{ vars.PROCESS_ENGINE_SERVICE_NAME || "ProcessEngineWorker" }}'
+          if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            sc.exe delete $serviceName | Out-Null
+          }
+
+          $binPath = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
+          sc.exe create $serviceName binPath= $binPath start= auto obj= LocalSystem
+          sc.exe failure $serviceName reset= 86400 actions= restart/5000
+          sc.exe description $serviceName "Process Engine worker service"
+          Start-Service -Name $serviceName
+          EOF
+
+          zip -r "process-engine-${{ steps.vars.outputs.tag }}.zip" dist install-process-engine.ps1
+
+      - name: Upload ZIP to S3
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3 cp "process-engine-${{ steps.vars.outputs.tag }}.zip" "s3://${{ vars.S3_BUCKET_DEPLOYMENTS }}/process-engine/process-engine-${{ steps.vars.outputs.tag }}.zip"
+
+      - name: Deploy via SSM to the Windows server
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > deploy-from-s3.ps1 <<'EOF'
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ steps.vars.outputs.tag }}"
+          $dest = "C:\\apps\\releases\\process-engine\\$tag"
+          $zipPath = "C:\\Temp\\process-engine-$tag.zip"
+          $s3Key = "process-engine/process-engine-$tag.zip"
+
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Read-S3Object -BucketName "${{ vars.S3_BUCKET_DEPLOYMENTS }}" -Key $s3Key -File $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $dest -Force
+
+          $psScript = Join-Path $dest "install-process-engine.ps1"
+          if (-not (Test-Path $psScript)) {
+            throw "Missing deploy script: $psScript"
+          }
+
+          & $psScript
+          EOF
+
+          json_lines=$(jq -R . < deploy-from-s3.ps1 | jq -s .)
+          INSTANCE_ID="${{ vars.WINDOWS_SERVER_INSTANCE_ID }}"
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name "AWS-RunPowerShellScript" \
+            --targets "Key=instanceIds,Values=$INSTANCE_ID" \
+            --region "${{ vars.AWS_REGION }}" \
+            --comment "Deploy Process Engine to Windows server" \
+            --parameters commands="$json_lines" \
+            --query "Command.CommandId" --output text)
+
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+
+          for i in $(seq 1 30); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --region "${{ vars.AWS_REGION }}" \
+              --query "Status" --output text)
+
+            echo "Attempt $i: $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "Deployment succeeded"
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "Deployment failed"
+              ERROR_OUTPUT=$(aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region "${{ vars.AWS_REGION }}" \
+                --query "StandardErrorContent" --output text)
+              echo "$ERROR_OUTPUT"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "Deployment command did not complete in time."
+          exit 1

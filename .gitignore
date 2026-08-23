@@ -6,6 +6,9 @@ __pycache__/
 process_engine.db
 .process_engine_auth
 .process_engine_key
+.env
+.env.*
+!.env.example
 node_modules/
 designer/dist/
 .DS_Store

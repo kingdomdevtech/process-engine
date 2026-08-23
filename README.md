@@ -250,11 +250,10 @@ and replays the persisted instance.
 **Settings → Execution** shows the queue depth and which engine hosts have
 checked in — so "nothing is happening" is answerable without reading logs.
 
-Ready-to-edit environment files: [deploy/linux-api.env.example](deploy/linux-api.env.example)
-and [deploy/windows-worker.env.example](deploy/windows-worker.env.example). Two
-things must match on both hosts: `PROCESS_ENGINE_DB_URL` (a real server — SQLite
-cannot be shared) and `PROCESS_ENGINE_SECRET_KEY`, or the engine cannot decrypt
-the secrets your steps use.
+Use a single local environment template: [.env.example](.env.example). Keep the
+same `PROCESS_ENGINE_DB_URL` and `PROCESS_ENGINE_SECRET_KEY` values on every host
+that touches the same deployment, or the engine cannot decrypt the secrets your
+steps use.
 
 ### Where file steps may write
 
