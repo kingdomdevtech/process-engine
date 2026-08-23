@@ -493,6 +493,12 @@ def create_app(
 
     @api.post("/processes", response_model=ProcessDefinition)
     def create_process(definition: ProcessDefinition, request: Request) -> ProcessDefinition:
+        # a process is saved with a single canonical name per step, because other
+        # steps resolve against that name in "{{ steps.foo.output }}".
+        details = validate_detailed(definition, registry)
+        dupes = [entry["message"] for entry in details if "duplicate step name" in entry["message"].lower()]
+        if dupes:
+            raise HTTPException(status_code=422, detail={"issues": dupes})
         # the creator is whoever called, never whatever the client sent: it is an
         # identity, and notifications are addressed to it
         definition.created_by = request.state.principal.get("name", "")
@@ -552,6 +558,10 @@ def create_app(
     def update_process(process_id: str, definition: ProcessDefinition, request: Request) -> ProcessDefinition:
         existing = _get_or_404(process_id, request)
         definition.id = process_id
+        details = validate_detailed(definition, registry)
+        dupes = [entry["message"] for entry in details if "duplicate step name" in entry["message"].lower()]
+        if dupes:
+            raise HTTPException(status_code=422, detail={"issues": dupes})
         # the designer PUTs the canvas it holds, which knows nothing about who
         # created the process or who it is shared with — carry both over rather
         # than let a save erase them, or let a client grant itself access

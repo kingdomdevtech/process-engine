@@ -7,36 +7,42 @@ trigger input; reference them inside the sub-process as
 ``{{ trigger.item }}`` / ``{{ trigger.index }}``.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from ..plugin import PluginManifest, PluginSpec
-from ..ui import ui
+from ..ui import ui, when
 
 
 class ForEachConfig(BaseModel):
+    mode: Literal["next_step", "process"] = Field(
+        default="next_step",
+        title="How to iterate",
+        description="Default: hand each item to the next step in the graph. Switch to 'process' to run a published sub-process once per item.",
+        json_schema_extra=ui(),
+    )
     items: Any = Field(
         default=None,
         title="List to work through",
-        description="Must be a list — usually rows from an earlier step. Leave empty to use whatever "
-        "the previous step passed in.",
+        description="Usually auto-detected from the previous step. Leave empty to use the upstream list "
+        "that arrived on this input.",
         examples=["{{ steps.fetch.output.rows }}"],
-        json_schema_extra=ui(),
+        json_schema_extra=ui(advanced=True, placeholder="auto-detect from previous step"),
     )
-    process_id: str = Field(
-        title="Process to run for each one",
-        description="Must be published. Inside it, the item is {{ trigger.item }} and its position "
+    process_id: str | None = Field(
+        default=None,
+        title="Published process to run for each one",
+        description="Used only in 'process' mode. Inside it, the item is {{ trigger.item }} and its position "
         "in the list is {{ trigger.index }}.",
-        json_schema_extra=ui(),
+        json_schema_extra=ui(show_if=when("mode", "process")),
     )
     parallel: int = Field(
         default=1,
         ge=1,
         le=16,
         title="Run at the same time",
-        description="1 works through the list one at a time. Raise it to go faster, as long as "
-        "whatever the sub-process touches can cope.",
+        description="Only used in 'process' mode. 1 works through the list one at a time.",
         json_schema_extra=ui(advanced=True, unit="at once"),
     )
     continue_on_error: bool = Field(

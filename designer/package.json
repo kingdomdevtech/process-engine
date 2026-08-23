@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --strictPort",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --strictPort"
+    "preview": "vite preview --host 127.0.0.1 --strictPort",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@xyflow/react": "^12.3.0",
@@ -15,6 +16,7 @@
     "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^4.3.0",
     "lucide-react": "^1.31.0",

@@ -40,6 +40,14 @@ class Position(BaseModel):
     y: float = 0
 
 
+class Viewport(BaseModel):
+    """Designer-only canvas viewport; the engine ignores it."""
+
+    x: float = 0
+    y: float = 0
+    zoom: float = 1.25
+
+
 class Step(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str = ""  # unique display name, usable in expressions instead of the id
@@ -118,6 +126,7 @@ class ProcessDefinition(BaseModel):
     # from a PUT: the designer round-trips a definition it has no business
     # editing access on. Admins see every process regardless of this list.
     shared_with: list[str] = Field(default_factory=list)
+    viewport: Viewport = Field(default_factory=Viewport)
     steps: list[Step] = Field(default_factory=list)
     connections: list[Connection] = Field(default_factory=list)
     triggers: list[Trigger] = Field(default_factory=list)

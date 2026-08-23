@@ -16,13 +16,22 @@ export default function ZoomIndicator() {
   const { zoomTo } = useReactFlow()
   const percent = Math.round(zoom * 100)
 
+  const resetZoom = () => {
+    try {
+      localStorage.setItem('pe_canvas_zoom', '1')
+    } catch {
+      /* private mode — the zoom just won't persist */
+    }
+    zoomTo(1, { duration: 200 })
+  }
+
   return (
     <button
       type="button"
       className="pointer-events-auto h-7 rounded-lg border border-line bg-surface px-2 text-[11px] font-semibold text-fg-muted tabular-nums shadow-md transition-colors hover:bg-surface-2 hover:text-fg"
       title="Reset zoom to 100%"
       aria-label={`Canvas zoom ${percent}%. Activate to reset to 100%.`}
-      onClick={() => zoomTo(1, { duration: 200 })}
+      onClick={resetZoom}
     >
       {percent}%
     </button>

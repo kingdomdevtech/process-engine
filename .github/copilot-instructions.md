@@ -72,6 +72,13 @@ docker compose up -d --build                 # designer+API container -> :8000
 Async tests need no decorator — pytest-asyncio runs in `auto` mode. A new plugin needs a
 restart of the API _and_ every engine: both discovery paths resolve at startup only.
 
+## Browser test rule
+
+Playwright tests must use the real designer flow end-to-end: log in in the browser, add steps
+from the palette, configure them in the UI, save through the app, and assert on the designer's
+visible state. Never call the API directly from a Playwright test with `fetch()` or raw HTTP
+requests — that skips the actual user path and hides the bug the browser would trigger.
+
 ## Invariants — changing these breaks saved data or the design
 
 - **The graph is a DAG.** `validate()` rejects cycles. Iteration is the `for_each` plugin

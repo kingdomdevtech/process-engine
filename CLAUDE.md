@@ -34,6 +34,13 @@ docker compose up -d mysql                   # or just the MySQL backend, then s
 
 Async tests need no decorator — pytest-asyncio runs in `auto` mode (pyproject.toml).
 
+### Browser tests must go through the designer UI
+
+Playwright/browser tests are a real user flow, not a backend smoke test. They must log in via
+`/login`, use the palette and canvas in the designer, save through the app, and observe the UI
+state. No test may call `fetch('/api/...')` or any backend endpoint directly from the browser
+script — that bypasses the user path, hides the real validation errors, and makes the test lie.
+
 ## Three distributions, and what each host installs
 
 The product is three Python packages under `packages/`, plus the npm app in `designer/`.

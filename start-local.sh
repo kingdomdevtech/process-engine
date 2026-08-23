@@ -41,6 +41,8 @@ if [ -f ./.env ]; then
   set +a
 fi
 
+export PROCESS_ENGINE_RELOAD="${PROCESS_ENGINE_RELOAD:-false}"
+
 if ! python -c "import process_engine_api" >/dev/null 2>&1; then
   python -m pip install -r requirements-dev.txt
 fi

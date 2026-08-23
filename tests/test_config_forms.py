@@ -100,6 +100,13 @@ def test_a_required_field_is_never_hidden_by_default():
             assert default in rule["in"], f"{key}.{name} is required but hidden until {rule['field']} changes"
 
 
+def test_for_each_process_id_is_hidden_unless_process_mode_is_selected():
+    plugin = spec_registry().get("for_each")
+    schema = plugin.Config.model_json_schema()
+    process_field = schema["properties"]["process_id"]
+    assert process_field["x-ui"]["showIf"] == {"field": "mode", "in": ["process"]}
+
+
 def test_an_unknown_widget_is_rejected_where_it_is_written():
     with pytest.raises(ValueError, match="unknown widget"):
         ui(widget="slider")

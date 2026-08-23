@@ -45,6 +45,10 @@ export default function StepNode({ id, data }) {
       className={`step-card relative min-w-[190px] rounded-lg border-2 bg-surface shadow-sm transition-shadow ${
         STATUS_RING[status] ?? 'border-line'
       } ${status === 'running' ? 'is-running' : ''}`}
+      onClick={(event) => {
+        event.stopPropagation()
+        data.onSelect?.(id)
+      }}
     >
       {issues.length > 0 && (
         <span

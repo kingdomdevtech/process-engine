@@ -49,12 +49,25 @@ function waitingText({ state, worker, workers_online: online }) {
  * is waiting for, since "queued" and "no worker is running" are the same
  * spinner otherwise.
  */
-export default function StepOutput({ processId, stepId, stepLabel, onBeforeRun }) {
-  const [result, setResult] = useState(null)
+export default function StepOutput({
+  processId,
+  stepId,
+  stepLabel,
+  onBeforeRun,
+  initialResult = null,
+  onResult = null,
+}) {
+  const [result, setResult] = useState(initialResult)
   const [busy, setBusy] = useState(false)
   const [waiting, setWaiting] = useState(null)
   const [error, setError] = useState('')
   const live = useRef(true)
+
+  useEffect(() => {
+    setResult(initialResult)
+    setError('')
+    setWaiting(null)
+  }, [initialResult, stepId])
 
   // deselecting the step unmounts this panel; the poll must not outlive it
   useEffect(() => {
@@ -91,9 +104,11 @@ export default function StepOutput({ processId, stepId, stepLabel, onBeforeRun }
       }
       if (reply.state === 'failed') throw new Error(reply.issues.join('; '))
       setResult(reply)
+      onResult?.(reply)
     } catch (err) {
       setError(String(err.message))
       setResult(null)
+      onResult?.(null)
     } finally {
       setWaiting(null)
       if (live.current) setBusy(false)

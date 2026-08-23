@@ -72,8 +72,8 @@ def test_picker_flattens_recorded_outputs(engine_host):
     assert "{{ steps.fetch.output.tags.0 }}" in paths        # and a sample element
 
 
-def test_names_that_are_not_identifiers_fall_back_to_the_step_id():
-    """A display name with a space cannot be addressed as a dotted path."""
+def test_human_step_names_are_normalized_for_expression_paths():
+    """A display name with spaces should still be usable as a dotted path alias."""
     definition = ProcessDefinition(
         steps=[
             Step(id="abc123", name="fetch orders", plugin="transform"),
@@ -83,7 +83,7 @@ def test_names_that_are_not_identifiers_fall_back_to_the_step_id():
     )
     groups = build_picker(definition, "later", None)
     paths = [field["path"] for group in groups for field in group["fields"]]
-    assert "{{ steps.abc123.output }}" in paths
+    assert "{{ steps.fetch_orders.output }}" in paths
     assert not any(" orders" in path for path in paths)
 
 

@@ -47,19 +47,24 @@ import StepInput from '../components/StepInput.jsx'
 import StepNode from '../components/StepNode.jsx'
 import StepOutput from '../components/StepOutput.jsx'
 import StepPanel from '../components/StepPanel.jsx'
+import TriggerNode from '../components/TriggerNode.jsx'
 import TriggersPanel from '../components/TriggersPanel.jsx'
 import ZoomIndicator from '../components/ZoomIndicator.jsx'
 import { useToast } from '../components/Toast.jsx'
 import Menu, { MenuItem, MenuLabel, MenuSeparator } from '../components/ui/Menu.jsx'
 import { useDialogs } from '../components/ui/Dialogs.jsx'
 
-const nodeTypes = { step: StepNode }
+const TRIGGER_NODE_ID = '__trigger__'
 const defaultEdgeOptions = {
   type: 'smoothstep',
   markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
 }
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'paused'])
 const MENU_SIZE = { width: 176, height: 96 }
+const CANVAS_ZOOM_KEY = 'pe_canvas_zoom'
+const CANVAS_VIEWPORT_KEY = 'pe_canvas_viewport'
+const DEFAULT_CANVAS_ZOOM = 1.25
+const DEFAULT_CANVAS_VIEWPORT = { x: 0, y: 0, zoom: DEFAULT_CANVAS_ZOOM }
 const DIRECTIONS = [
   { value: 'horizontal', label: 'Left to right', icon: <MoveRight size={15} /> },
   { value: 'vertical', label: 'Top to bottom', icon: <MoveDown size={15} /> },
@@ -76,6 +81,18 @@ const MINIMAP_COLORS = {
   skipped: 'var(--line-strong)',
 }
 let stepCounter = 0
+
+function spreadStepPosition(position, index) {
+  const slot = index % 9
+  const column = slot % 3
+  const row = Math.floor(slot / 3)
+  const offsetX = (column - 1) * 52
+  const offsetY = (row - 1) * 52
+  return {
+    x: position.x + offsetX,
+    y: position.y + offsetY,
+  }
+}
 
 // Step names must stay unique — they double as expression handles. Mirrors the
 // server-side naming for cloned processes.
@@ -113,10 +130,61 @@ function EditorInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [selectedId, setSelectedId] = useState(null)
+  const [stepOutputs, setStepOutputs] = useState({})
   const [inspectorTab, setInspectorTab] = useState('config')
   const [menu, setMenu] = useState(null) // right-click menu: { nodeId, label, x, y }
   const { orientation, isVertical, setOrientation } = useOrientation()
-  const { screenToFlowPosition, deleteElements, getViewport, fitView } = useReactFlow()
+  const { screenToFlowPosition, deleteElements, getViewport, fitView, setViewport } = useReactFlow()
+  const nodeTypes = useMemo(() => ({ step: StepNode, trigger: TriggerNode }), [])
+  const persistZoom = useCallback((zoom) => {
+    try {
+      const next = Number.isFinite(zoom) ? Math.min(2.5, Math.max(0.25, zoom)) : DEFAULT_CANVAS_ZOOM
+      localStorage.setItem(CANVAS_ZOOM_KEY, String(next))
+      const stored = readStoredViewport()
+      const viewport = { ...stored, zoom: next }
+      localStorage.setItem(CANVAS_VIEWPORT_KEY, JSON.stringify(viewport))
+    } catch {
+      /* private mode — the zoom just won't persist */
+    }
+  }, [])
+  const readStoredZoom = useCallback(() => {
+    try {
+      const stored = Number(localStorage.getItem(CANVAS_ZOOM_KEY))
+      return Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_CANVAS_ZOOM
+    } catch {
+      return DEFAULT_CANVAS_ZOOM
+    }
+  }, [])
+  const readStoredViewport = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(CANVAS_VIEWPORT_KEY)
+      if (!raw) return DEFAULT_CANVAS_VIEWPORT
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object') return DEFAULT_CANVAS_VIEWPORT
+      const zoom = Number.isFinite(parsed.zoom) && parsed.zoom > 0 ? parsed.zoom : readStoredZoom()
+      return {
+        x: Number.isFinite(parsed.x) ? parsed.x : 0,
+        y: Number.isFinite(parsed.y) ? parsed.y : 0,
+        zoom,
+      }
+    } catch {
+      return DEFAULT_CANVAS_VIEWPORT
+    }
+  }, [readStoredZoom])
+  const persistViewport = useCallback((viewport) => {
+    if (!viewport || typeof viewport !== 'object') return
+    const safe = {
+      x: Number.isFinite(viewport.x) ? viewport.x : 0,
+      y: Number.isFinite(viewport.y) ? viewport.y : 0,
+      zoom: Number.isFinite(viewport.zoom) ? Math.min(2.5, Math.max(0.25, viewport.zoom)) : DEFAULT_CANVAS_ZOOM,
+    }
+    try {
+      localStorage.setItem(CANVAS_VIEWPORT_KEY, JSON.stringify(safe))
+      localStorage.setItem(CANVAS_ZOOM_KEY, String(safe.zoom))
+    } catch {
+      /* private mode — the viewport just won't persist */
+    }
+  }, [])
   const pollTimer = useRef(null)
   const history = useRef({ past: [], future: [] })
   const [historyDepth, setHistoryDepth] = useState({ past: 0, future: 0 })
@@ -203,21 +271,50 @@ function EditorInner() {
       record()
       setDirty(true)
       stepCounter += 1
-      setNodes((nds) =>
-        nds.concat({
-          id: `${key}_${Date.now().toString(36)}_${stepCounter}`,
+      const nextId = `${key}_${Date.now().toString(36)}_${stepCounter}`
+
+      setNodes((nds) => {
+        const nextIndex = nds.length
+        const nextPosition = spreadStepPosition(position, nextIndex)
+        const nextStep = {
+          id: nextId,
           type: 'step',
-          position,
+          position: nextPosition,
+          selectable: true,
+          draggable: true,
           data: {
             label: `${plugin.name} ${stepCounter}`,
             plugin: key,
             config: {},
             outputs: plugin.outputs.map((port) => port.name),
+            onSelect: setSelectedId,
           },
-        }),
-      )
+        }
+
+        const priorStep = [...nds].reverse().find((node) => node.id !== TRIGGER_NODE_ID && node.type === 'step')
+        const sourceId = priorStep ? priorStep.id : TRIGGER_NODE_ID
+        setEdges((eds) => {
+          if (eds.some((edge) => edge.target === nextId)) return eds
+          if (!sourceId) return eds
+          const edgeId = sourceId === TRIGGER_NODE_ID ? `${TRIGGER_NODE_ID}-to-${nextId}` : `${sourceId}->${nextId}`
+          return eds.concat({
+            id: edgeId,
+            source: sourceId,
+            target: nextId,
+            sourceHandle: 'main',
+            targetHandle: 'main',
+            type: 'smoothstep',
+            markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+            animated: true,
+            style: { stroke: 'var(--line-strong)' },
+          })
+        })
+
+        setSelectedId(nextId)
+        return nds.concat(nextStep)
+      })
     },
-    [pluginByKey, record, setNodes],
+    [pluginByKey, record, setEdges, setNodes],
   )
 
   const onDrop = useCallback(
@@ -258,7 +355,7 @@ function EditorInner() {
         direction,
       )
       setNodes((nds) => nds.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position })))
-      window.requestAnimationFrame(() => fitView({ duration: 250, padding: 0.2 }))
+      window.requestAnimationFrame(() => fitView({ duration: 250, padding: 0.2, maxZoom: 1.25 }))
       return true
     },
     [nodes, edges, record, setNodes, fitView],
@@ -359,19 +456,21 @@ function EditorInner() {
       stepCounter += 1
       const id = `${source.data.plugin}_${Date.now().toString(36)}_${stepCounter}`
       const label = copyLabel(source.data.label, new Set(nodes.map((n) => n.data.label)))
-      setNodes((nds) =>
-        nds.concat({
+      setNodes((nds) => {
+        const nextIndex = nds.length
+        const nextPosition = spreadStepPosition({ x: source.position.x, y: source.position.y }, nextIndex)
+        return nds.concat({
           id,
           type: 'step',
-          position: { x: source.position.x + 36, y: source.position.y + 36 },
+          position: nextPosition,
           data: {
             label,
             plugin: source.data.plugin,
             config: structuredClone(source.data.config ?? {}),
             outputs: source.data.outputs,
           },
-        }),
-      )
+        })
+      })
       setSelectedId(id) // connections are not copied — wire the copy up yourself
     },
     [nodes, record, setNodes],
@@ -410,26 +509,36 @@ function EditorInner() {
   // ---- definition <-> canvas -------------------------------------------------------
 
   const toDefinition = useCallback(
-    () => ({
-      name: processName,
-      folder,
-      triggers,
-      notifications,
-      steps: nodes.map((n) => ({
-        id: n.id,
-        name: n.data.label,
-        plugin: n.data.plugin,
-        config: n.data.config ?? {},
-        position: { x: n.position.x, y: n.position.y },
-      })),
-      connections: edges.map((e) => ({
-        source: e.source,
-        source_port: e.sourceHandle || 'main',
-        target: e.target,
-        target_port: e.targetHandle || 'main',
-      })),
-    }),
-    [processName, folder, triggers, notifications, nodes, edges],
+    () => {
+      const viewport = getViewport()
+      return {
+        name: processName,
+        folder,
+        triggers,
+        notifications,
+        viewport: {
+          x: viewport.x,
+          y: viewport.y,
+          zoom: viewport.zoom,
+        },
+        steps: nodes.map((n) => ({
+          id: n.id,
+          name: n.data.label,
+          plugin: n.data.plugin,
+          config: n.data.config ?? {},
+          position: { x: n.position.x, y: n.position.y },
+        })),
+        connections: edges
+          .filter((e) => e.source !== TRIGGER_NODE_ID && e.target !== TRIGGER_NODE_ID)
+          .map((e) => ({
+            source: e.source,
+            source_port: e.sourceHandle || 'main',
+            target: e.target,
+            target_port: e.targetHandle || 'main',
+          })),
+      }
+    },
+    [processName, folder, triggers, notifications, nodes, edges, getViewport],
   )
 
   const refreshRuns = useCallback(
@@ -448,6 +557,7 @@ function EditorInner() {
       setNotifications(definition.notifications ?? {})
       setCreatedBy(definition.created_by ?? '')
       setSharedWith(definition.shared_with ?? [])
+      const savedViewport = definition.viewport ?? readStoredViewport()
       /* A definition with no arrangement of its own gets one on open, in
          whichever direction this browser reads processes. Nothing is written
          back: the layout is deterministic, so it is the same on every open
@@ -464,11 +574,14 @@ function EditorInner() {
           id: step.id,
           type: 'step',
           position: layout?.get(step.id) ?? { x: step.position?.x ?? 0, y: step.position?.y ?? 0 },
+          selectable: true,
+          draggable: true,
           data: {
             label: step.name || step.id,
             plugin: step.plugin,
             config: step.config ?? {},
             outputs: (pluginByKey[step.plugin]?.outputs ?? [{ name: 'main' }]).map((p) => p.name),
+            onSelect: setSelectedId,
           },
         })),
       )
@@ -482,6 +595,11 @@ function EditorInner() {
           label: conn.source_port !== 'main' ? conn.source_port : undefined,
         })),
       )
+      window.requestAnimationFrame(() => {
+        const viewport = savedViewport
+        setViewport({ x: viewport.x ?? 0, y: viewport.y ?? 0, zoom: viewport.zoom ?? readStoredZoom() }, { duration: 0 })
+        persistViewport({ x: viewport.x ?? 0, y: viewport.y ?? 0, zoom: viewport.zoom ?? readStoredZoom() })
+      })
       setRunView(null)
       setSelectedId(null)
       setServerIssues({ byStep: {}, general: [] })
@@ -490,7 +608,7 @@ function EditorInner() {
       setDirty(false)
       refreshRuns(definition.id)
     },
-    [guard, pluginByKey, orientation, setNodes, setEdges, refreshRuns, syncDepth],
+    [guard, pluginByKey, orientation, setNodes, setEdges, refreshRuns, syncDepth, readStoredViewport, readStoredZoom, setViewport, persistViewport],
   )
 
   // load once the plugin manifests are in (needed to map output ports)
@@ -681,7 +799,17 @@ function EditorInner() {
 
   const clientIssues = useMemo(() => {
     const issues = {}
+    const seenNames = new Map()
     for (const node of nodes) {
+      const label = (node.data.label ?? '').trim()
+      const key = label.toLowerCase()
+      if (label && seenNames.has(key)) {
+        const existing = seenNames.get(key)
+        issues[node.id] = [...(issues[node.id] ?? []), `Step name “${label}” is already used by ${existing}`]
+      } else if (label) {
+        seenNames.set(key, label)
+      }
+
       const schema = pluginByKey[node.data.plugin]?.config_schema
       const missing = (schema?.required ?? []).filter((field) => {
         const value = (node.data.config ?? {})[field]
@@ -689,9 +817,9 @@ function EditorInner() {
       })
       // name the field as its form label, not as the key underneath it
       if (missing.length) {
-        issues[node.id] = missing.map(
+        issues[node.id] = [...(issues[node.id] ?? []), ...missing.map(
           (field) => `“${schema?.properties?.[field]?.title || field}” is required`,
-        )
+        )]
       }
     }
     return issues
@@ -727,7 +855,31 @@ function EditorInner() {
     [edges, runStatusByStep],
   )
 
-  const selectedNode = nodes.find((n) => n.id === selectedId) ?? null
+  const visibleTriggerNode = useMemo(
+    () => ({
+      id: TRIGGER_NODE_ID,
+      type: 'trigger',
+      position: { x: 90, y: 140 },
+      data: { label: 'Trigger', onSelect: setSelectedId },
+      hidden: false,
+      draggable: false,
+      selectable: true,
+      style: { visibility: 'visible' },
+    }),
+    [],
+  )
+
+  const canvasNodes = useMemo(
+    () => [visibleTriggerNode, ...nodes].map((node) => ({ ...node, selected: selectedId === node.id })),
+    [visibleTriggerNode, nodes, selectedId],
+  )
+  const canvasEdges = useMemo(() => edges, [edges])
+  const selectedNodeIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId])
+
+  const selectedNode =
+    selectedId === TRIGGER_NODE_ID
+      ? visibleTriggerNode
+      : nodes.find((n) => n.id === selectedId) ?? null
   const selectedPlugin = selectedNode ? pluginByKey[selectedNode.data.plugin] : null
   const selectedIssues = selectedNode
     ? [...(clientIssues[selectedNode.id] ?? []), ...(serverIssues.byStep[selectedNode.id] ?? [])]
@@ -919,14 +1071,39 @@ function EditorInner() {
           )}
 
           <ReactFlow
-            nodes={decoratedNodes}
-            edges={decoratedEdges}
+            nodes={canvasNodes.map((node) =>
+              node.id === TRIGGER_NODE_ID
+                ? { ...node, data: { ...node.data, plugin: 'trigger' } }
+                : decoratedNodes.find((candidate) => candidate.id === node.id) ?? node,
+            )}
+            edges={canvasEdges.map((edge) =>
+              edge.source === TRIGGER_NODE_ID || edge.target === TRIGGER_NODE_ID
+                ? { ...edge }
+                : decoratedEdges.find((candidate) => candidate.id === edge.id) ?? edge,
+            )}
             nodeTypes={nodeTypes}
+            selection={selectedNodeIds}
             defaultEdgeOptions={defaultEdgeOptions}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+            defaultViewport={readStoredViewport()}
+            onNodesChange={(changes) => {
+              onNodesChange(changes.filter((change) => change.id !== TRIGGER_NODE_ID))
+            }}
+            onMoveEnd={(_, viewport) => {
+              persistViewport(viewport)
+              persistZoom(viewport.zoom)
+            }}
+            onEdgesChange={(changes) => {
+              onEdgesChange(changes.filter((change) => !(change.id ?? '').startsWith(`${TRIGGER_NODE_ID}-to-`)))
+            }}
             onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedId(node.id)}
+            onSelectionChange={({ nodes: selectedNodes }) => {
+              const nextId = selectedNodes[0]?.id ?? null
+              setSelectedId(nextId)
+            }}
+            onNodeClick={(_, node) => {
+              setSelectedId(node.id)
+              setInspectorTab('config')
+            }}
             onPaneClick={() => setSelectedId(null)}
             onNodeContextMenu={openMenu}
             onPaneContextMenu={(event) => {
@@ -941,7 +1118,6 @@ function EditorInner() {
               return true
             }}
             deleteKeyCode={['Delete', 'Backspace']}
-            fitView
             snapToGrid
             snapGrid={[12, 12]}
             proOptions={{ hideAttribution: true }}
@@ -968,7 +1144,7 @@ function EditorInner() {
               <div className="max-w-xs rounded-xl border border-dashed border-line bg-surface/90 p-5 text-center shadow-sm backdrop-blur">
                 <p className="text-sm font-semibold">Start with a step</p>
                 <p className="mt-1 text-[13px] text-fg-muted">
-                  Drag one from the palette, or click it to drop it here. Connect steps to control what runs next.
+                  Drag one from the palette, or click it to drop it here. The trigger fires first and each new step can take the trigger or an upstream result.
                 </p>
               </div>
             </div>
@@ -1014,7 +1190,7 @@ function EditorInner() {
           className="flex w-[360px] shrink-0 flex-col overflow-y-auto border-l border-line bg-surface max-xl:w-[320px] max-lg:hidden"
           data-tour="inspector"
         >
-          {selectedNode ? (
+          {selectedNode && selectedId !== TRIGGER_NODE_ID ? (
             <>
               <div className="flex items-start gap-2.5 border-b border-line px-4 py-3">
                 <PluginIcon
@@ -1091,6 +1267,13 @@ function EditorInner() {
                   stepId={selectedNode.id}
                   stepLabel={selectedNode.data.label}
                   onBeforeRun={save}
+                  initialResult={stepOutputs[selectedNode.id] ?? null}
+                  onResult={(result) =>
+                    setStepOutputs((current) => ({
+                      ...current,
+                      [selectedNode.id]: result,
+                    }))
+                  }
                 />
               )}
             </>

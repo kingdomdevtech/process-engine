@@ -303,7 +303,7 @@ async def test_for_each_runs_subprocess_per_item():
     engine = Engine(make_registry(), definition_resolver=resolver.get)
     definition = ProcessDefinition(
         steps=[Step(id="fan", plugin="for_each",
-                    config={"items": "{{ trigger.items }}", "process_id": "sub", "parallel": 2})],
+                    config={"mode": "process", "items": "{{ trigger.items }}", "process_id": "sub", "parallel": 2})],
     )
     instance = await engine.run(definition, trigger_input={"items": ["a", "b", "c"]})
     assert instance.status == RunStatus.SUCCEEDED
@@ -313,13 +313,86 @@ async def test_for_each_runs_subprocess_per_item():
     assert [r["output"]["idx"] for r in result["results"]] == [0, 1, 2]
 
 
+async def test_for_each_detects_array_in_trigger_payload_without_manual_items():
+    resolver = {"sub": sub_definition()}
+    engine = Engine(make_registry(), definition_resolver=resolver.get)
+    definition = ProcessDefinition(
+        steps=[Step(id="fan", plugin="for_each", config={"mode": "process", "process_id": "sub"})],
+    )
+    instance = await engine.run(definition, trigger_input={"rows": ["a", "b", "c"]})
+    assert instance.status == RunStatus.SUCCEEDED
+    result = run_of(instance, "fan").outputs["main"]
+    assert result["count"] == 3 and result["failed"] == 0
+    assert [r["output"]["echo"] for r in result["results"]] == ["a", "b", "c"]
+
+
+async def test_for_each_treats_blank_items_as_auto_detect():
+    resolver = {"sub": sub_definition()}
+    engine = Engine(make_registry(), definition_resolver=resolver.get)
+    definition = ProcessDefinition(
+        steps=[Step(id="fan", plugin="for_each", config={"mode": "process", "items": "", "process_id": "sub"})],
+    )
+    instance = await engine.run(definition, trigger_input={"rows": ["a", "b", "c"]})
+    assert instance.status == RunStatus.SUCCEEDED
+    result = run_of(instance, "fan").outputs["main"]
+    assert result["count"] == 3 and result["failed"] == 0
+    assert [r["output"]["echo"] for r in result["results"]] == ["a", "b", "c"]
+
+
+async def test_for_each_ignores_stale_item_reference_and_uses_upstream_input():
+    resolver = {"sub": sub_definition()}
+    engine = Engine(make_registry(), definition_resolver=resolver.get)
+    definition = ProcessDefinition(
+        steps=[Step(id="fan", plugin="for_each",
+                    config={"mode": "process", "items": "steps.fetch.output.rows", "process_id": "sub"})],
+    )
+    instance = await engine.run(definition, trigger_input={"rows": ["a", "b", "c"]})
+    assert instance.status == RunStatus.SUCCEEDED
+    result = run_of(instance, "fan").outputs["main"]
+    assert result["count"] == 3 and result["failed"] == 0
+    assert [r["output"]["echo"] for r in result["results"]] == ["a", "b", "c"]
+
+
+async def test_for_each_ignores_missing_step_reference_in_items_expression_and_uses_upstream_input():
+    resolver = {"sub": sub_definition()}
+    engine = Engine(make_registry(), definition_resolver=resolver.get)
+    definition = ProcessDefinition(
+        steps=[Step(id="fan", plugin="for_each",
+                    config={"mode": "process", "items": "{{ steps.fetch.output.rows }}", "process_id": "sub"})],
+    )
+    instance = await engine.run(definition, trigger_input={"rows": ["a", "b", "c"]})
+    assert instance.status == RunStatus.SUCCEEDED
+    result = run_of(instance, "fan").outputs["main"]
+    assert result["count"] == 3 and result["failed"] == 0
+    assert [r["output"]["echo"] for r in result["results"]] == ["a", "b", "c"]
+
+
+async def test_for_each_uses_valid_step_reference_when_previous_step_output_is_a_list():
+    resolver = {"sub": sub_definition()}
+    engine = Engine(make_registry(), definition_resolver=resolver.get)
+    definition = ProcessDefinition(
+        steps=[
+            Step(id="orders", name="orders", plugin="transform",
+                 config={"mode": "replace", "values": {"rows": ["a", "b", "c"]}}),
+            Step(id="fan", plugin="for_each",
+                 config={"mode": "process", "items": "{{ steps.orders.output.rows }}", "process_id": "sub"}),
+        ],
+        connections=[{"id": "c1", "source": "orders", "source_port": "main", "target": "fan", "target_port": "main"}],
+    )
+    instance = await engine.run(definition)
+    assert instance.status == RunStatus.SUCCEEDED
+    result = run_of(instance, "fan").outputs["main"]
+    assert result["count"] == 3 and result["failed"] == 0
+    assert [r["output"]["echo"] for r in result["results"]] == ["a", "b", "c"]
+
+
 async def test_for_each_continue_on_error_collects_failures():
     failing_sub = ProcessDefinition(id="boom", version=1,
                                     steps=[Step(id="f", plugin="always_fail")])
     engine = Engine(make_registry(AlwaysFailPlugin), definition_resolver={"boom": failing_sub}.get)
     definition = ProcessDefinition(
         steps=[Step(id="fan", plugin="for_each",
-                    config={"items": [1, 2], "process_id": "boom", "continue_on_error": True})],
+                    config={"mode": "process", "items": [1, 2], "process_id": "boom", "continue_on_error": True})],
     )
     instance = await engine.run(definition)
     assert instance.status == RunStatus.SUCCEEDED

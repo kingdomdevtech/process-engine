@@ -28,6 +28,10 @@ applyTo: "tests/**/*.py"
   gitignored; don't commit or hard-code them.
 - Prefer a real in-process run over mocking the engine. Mock only at the outside edge (SMTP,
   boto3, COM, HTTP).
+- Browser/Playwright tests are designer-driven. They log in through the UI, add steps from the
+  palette, configure them in the editor, save via the app, and assert on the visible process
+  state. They never call `/api/*` directly from the script — a direct API request is not a
+  user flow and is explicitly disallowed.
 
 What the suites guard, so a change lands in the right one:
 

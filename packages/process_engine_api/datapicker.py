@@ -43,15 +43,32 @@ def upstream_step_ids(definition: ProcessDefinition, step_id: str) -> list[str]:
     return [step.id for step in definition.steps if step.id in seen]
 
 
+def _normalised_reference(name: str) -> str:
+    """Turn a human-facing step name into a dotted-path identifier.
+
+    This keeps expression references friendly for users while still making them
+    safe in ``{{ steps.foo_bar.output }}`` lookups.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
+    if not cleaned:
+        return ""
+    if cleaned[0].isdigit():
+        cleaned = f"_{cleaned}"
+    return cleaned
+
+
 def reference_for(step) -> str:
     """How to address a step inside an expression.
 
-    Expressions are dotted paths, so a display name only works when it is a
-    plain identifier ("fetch_order"). Anything else — spaces, dots, punctuation
-    — falls back to the step id, which is always safe.
+    A display name like "Get Processes" is exposed as the usable alias
+    "get_processes" so the expression stays readable without breaking the
+    dotted-path rule. Only a completely invalid or empty name falls back to the
+    step id.
     """
-    if step.name and _SAFE_REFERENCE.fullmatch(step.name):
-        return step.name
+    if step.name:
+        normalized = _normalised_reference(step.name)
+        if normalized:
+            return normalized.lower()
     return step.id
 
 

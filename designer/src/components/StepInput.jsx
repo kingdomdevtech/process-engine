@@ -5,17 +5,16 @@ import { absoluteTime, shortId } from '../format.js'
 import JsonTree from './JsonTree.jsx'
 
 const TRIGGER = '__trigger__'
-const EFFECTIVE = '__effective__'
 
 /**
- * What this step actually receives: the trigger payload and each connected
- * upstream step's recorded output, with real values. Clicking any value assigns
- * the expression for it to the selected config field.
+ * The step input panel exposes exactly the sources the graph can legally feed
+ * it: the trigger payload, or the output of an upstream step. The raw
+ * combined-input view is a debugging aid, not a UX choice for normal editing.
  */
 export default function StepInput({ processId, stepId, fields, onAssign }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const [source, setSource] = useState(EFFECTIVE)
+  const [source, setSource] = useState(TRIGGER)
   const [target, setTarget] = useState(fields[0] ?? '')
 
   const load = useCallback(() => {
@@ -38,6 +37,21 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
     if (!fields.includes(target)) setTarget(fields[0] ?? '')
   }, [fields, target])
 
+  useEffect(() => {
+    if (!data) return
+    const available = data.sources.map((entry) => entry.step_id)
+    const defaultSource = available.length > 0 ? available[0] : TRIGGER
+
+    if (available.length === 0) {
+      if (source !== TRIGGER) setSource(TRIGGER)
+      return
+    }
+
+    if (!available.includes(source)) {
+      setSource(defaultSource)
+    }
+  }, [data, source])
+
   if (error) {
     return (
       <div className="panel">
@@ -54,7 +68,6 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
   }
 
   const options = [
-    { key: EFFECTIVE, label: 'Combined input (what the step receives)' },
     { key: TRIGGER, label: 'Trigger data' },
     ...data.sources.map((entry) => ({
       key: entry.step_id,
@@ -66,11 +79,7 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
   let shown
   let basePath = ''
   let label = 'input'
-  if (source === EFFECTIVE) {
-    shown = data.effective_input
-    basePath = '{{ input'
-    label = 'input'
-  } else if (source === TRIGGER) {
+  if (source === TRIGGER) {
     shown = data.trigger
     basePath = '{{ trigger'
     label = 'trigger'
@@ -129,7 +138,7 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
         ))}
       </select>
 
-      {data.sources.length === 0 && source === EFFECTIVE && (
+      {data.sources.length === 0 && source === TRIGGER && (
         <p className="hint mt-1.5 flex items-start gap-1.5">
           <Info size={12} className="mt-px shrink-0" aria-hidden="true" />
           This step has no incoming connection, so it receives the trigger payload.

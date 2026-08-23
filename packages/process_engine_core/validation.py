@@ -53,9 +53,10 @@ def validate_detailed(definition: ProcessDefinition, registry: PluginRegistry) -
             issue(f"duplicate step id {step.id!r}", step.id)
         seen_ids.add(step.id)
         if step.name:
-            if step.name in seen_names:
-                issue(f"duplicate step name {step.name!r}", step.id)
-            seen_names.add(step.name)
+            key = step.name.strip().lower()
+            if key in seen_names:
+                issue(f"duplicate step name {step.name!r} (step names must be unique within a process)", step.id)
+            seen_names.add(key)
         if step.plugin not in registry:
             issue(f"step {label!r} uses unknown plugin {step.plugin!r}", step.id)
 

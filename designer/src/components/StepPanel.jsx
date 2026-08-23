@@ -56,7 +56,7 @@ export default function StepPanel({
         onChange={(event) => onRename(node.id, event.target.value)}
       />
       <p className="hint mt-1">
-        Also how other steps address it: <code className="code">{`{{ steps.${node.data.label}.output }}`}</code>
+        Also how other steps address it: <code className="code">{`{{ steps.${(node.data.label || '').trim() || 'step_name'}.output }}`}</code>
       </p>
 
       {issues.length > 0 && (

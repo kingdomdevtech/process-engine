@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict, deque
 from collections.abc import Mapping
@@ -262,6 +263,11 @@ class Engine:
             scope["steps"][step_id] = entry
             if step.name:
                 scope["steps"].setdefault(step.name, entry)
+                alias = re.sub(r"[^A-Za-z0-9_]+", "_", step.name).strip("_")
+                if alias:
+                    if alias[0].isdigit():
+                        alias = f"_{alias}"
+                    scope["steps"].setdefault(alias.lower(), entry)
             self._settle_downstream(step_id, outputs, outgoing, unsettled, deliveries, ready)
             self._notify(on_update, instance)
 
@@ -360,6 +366,11 @@ class Engine:
             source = steps_by_id.get(run.step_id)
             if source is not None and source.name:
                 scope["steps"].setdefault(source.name, entry)
+                alias = re.sub(r"[^A-Za-z0-9_]+", "_", source.name).strip("_")
+                if alias:
+                    if alias[0].isdigit():
+                        alias = f"_{alias}"
+                    scope["steps"].setdefault(alias.lower(), entry)
 
         has_incoming = any(conn.target == step_id for conn in definition.connections)
         delivered = deliveries_from_run(definition, step_id, instance)
@@ -430,7 +441,18 @@ class Engine:
         try:
             resolved = resolve(step.config, {**scope, "input": input_payload})
             config = plugin_cls.Config.model_validate(resolved)
-        except (ExpressionError, ValidationError) as exc:
+        except ExpressionError as exc:
+            if step.plugin == "for_each" and isinstance(step.config, dict):
+                raw_cfg = dict(step.config)
+                items = raw_cfg.pop("items", None)
+                try:
+                    resolved = resolve(raw_cfg, {**scope, "input": input_payload})
+                    config = plugin_cls.Config.model_validate({**resolved, "items": items})
+                except (ExpressionError, ValidationError):
+                    raise exc
+            else:
+                raise
+        except ValidationError as exc:
             run.status = RunStatus.FAILED
             run.error = str(exc)
             stop_clock()

@@ -154,6 +154,21 @@ def test_validation_endpoint_reports_issues_with_step_ids():
     assert client.post(f"/api/processes/{process_id}/publish").status_code == 422
 
 
+def test_duplicate_step_names_are_rejected_on_save():
+    client = make_client()
+    bad = {
+        "name": "Broken",
+        "steps": [
+            {"id": "a", "name": "same", "plugin": "log", "config": {"message": "one"}},
+            {"id": "b", "name": "same", "plugin": "log", "config": {"message": "two"}},
+        ],
+        "connections": [],
+    }
+    response = client.post("/api/processes", json=bad)
+    assert response.status_code == 422
+    assert "duplicate step name" in response.json()["detail"]["issues"][0].lower()
+
+
 def test_webhook_fires_published_process_without_bearer_token(engine_host):
     with make_client() as client:
         definition = {**DEFINITION, "triggers": [{"type": "webhook", "path": "hooky"}]}

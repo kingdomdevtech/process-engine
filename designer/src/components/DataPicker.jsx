@@ -101,7 +101,7 @@ export default function DataPicker({ processId, stepId, fieldName, onPick, onClo
                 key={field.path}
                 className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-surface-2"
                 onClick={() => {
-                  onPick(field.path)
+                  onPick({ path: field.path, type: field.type })
                   onClose()
                 }}
               >

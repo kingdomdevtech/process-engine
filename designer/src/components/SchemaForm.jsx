@@ -370,16 +370,28 @@ export default function SchemaForm({ nodeId, schema, config, onChange, processes
   const sections = toSections(properties)
   const titled = sections.filter((section) => section.title).length > 1
 
-  const assign = (field, expression) => {
+  const assign = (field, picked) => {
+    const expression = typeof picked === 'string' ? picked : picked?.path ?? picked
+    const sourceType = typeof picked === 'object' ? picked?.type : undefined
     const current = config[field]
     const spec = properties[field] ?? {}
-    if (firstType(spec) === 'array') {
-      onChange(field, Array.isArray(current) ? [...current, expression] : [expression])
-    } else if (typeof current === 'string' && current.trim()) {
-      onChange(field, `${current}${expression}`) // append into the existing template
-    } else {
+
+    if (sourceType === 'array') {
       onChange(field, expression)
+      return
     }
+
+    if (firstType(spec) === 'array') {
+      onChange(field, Array.isArray(current) ? [...current, expression] : expression)
+      return
+    }
+
+    if (typeof current === 'string' && current.trim()) {
+      onChange(field, `${current}${expression}`) // append into the existing template
+      return
+    }
+
+    onChange(field, expression)
   }
 
   const pickExpression = (label, apply) => setPicking({ label, apply })
