@@ -78,6 +78,11 @@ via `ui()` from `process_engine_core.ui`:
 - `widget=` overrides the type-derived control and is validated against `ui.WIDGETS` at import
   time — a typo raises there, not silently in the browser. Types already imply the right
   control: `list[str]` is a chip editor, `dict[str, X]` a name/value editor.
+- `detect="array"` (validated against `ui.DETECTORS`, same as `widget`) marks a field that
+  names a list the step above almost certainly already produces: the form fills it from the
+  connected upstream step the first time it opens and offers *Detect from the previous step*
+  after the arrow moves — see `for_each.items`. A hint about where a value comes from, not a
+  default the plugin may rely on; it is still an expression a person can overwrite.
 - `Field(examples=[...])` drives both the placeholder and the *Show example* JSON. Steer that
   through examples rather than special-casing the plugin in the designer.
 - `format: "html"` on a string renders the HTML editor (see `send_email_ses.body_html`).

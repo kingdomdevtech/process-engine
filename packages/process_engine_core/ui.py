@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["WIDGETS", "ui", "when"]
+__all__ = ["DETECTORS", "WIDGETS", "ui", "when"]
 
 #: Every widget the designer knows how to draw. A name outside this set would
 #: fall back to the raw JSON editor without saying why, so ``ui()`` rejects it
@@ -52,12 +52,20 @@ WIDGETS = frozenset(
     }
 )
 
+#: What a field can ask the designer to work out from the step above it. The
+#: designer reads the connected step's recorded output and fills the field with
+#: the expression addressing the first value of that shape, so "which list am I
+#: iterating?" is answered by the graph instead of typed. Same reasoning as
+#: :data:`WIDGETS`: an unknown name would silently do nothing in the browser.
+DETECTORS = frozenset({"array"})
+
 
 def ui(
     *,
     group: str | None = None,
     advanced: bool = False,
     widget: str | None = None,
+    detect: str | None = None,
     placeholder: str | None = None,
     secret: bool = False,
     labels: dict[str, str] | None = None,
@@ -72,6 +80,8 @@ def ui(
     ``group``      section heading; fields sharing one are rendered together
     ``advanced``   tuck the field into the group's collapsed "Advanced" area
     ``widget``     override the widget implied by the type (see module docs)
+    ``detect``     offer "detect from the previous step" beside the field, and
+                   fill it in on its own while it is empty (see :data:`DETECTORS`)
     ``placeholder``ghost text shown while the field is empty
     ``secret``     offer the stored-secret picker beside the input
     ``labels``     human wording per enum value, ``{"not_equals": "is not"}``
@@ -82,10 +92,13 @@ def ui(
     """
     if widget is not None and widget not in WIDGETS:
         raise ValueError(f"unknown widget {widget!r}; expected one of {', '.join(sorted(WIDGETS))}")
+    if detect is not None and detect not in DETECTORS:
+        raise ValueError(f"unknown detector {detect!r}; expected one of {', '.join(sorted(DETECTORS))}")
     hints: dict[str, Any] = {
         "group": group,
         "advanced": advanced or None,
         "widget": widget,
+        "detect": detect,
         "placeholder": placeholder,
         "secret": secret or None,
         "labels": labels,

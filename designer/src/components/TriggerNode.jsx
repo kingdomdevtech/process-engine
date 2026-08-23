@@ -2,12 +2,17 @@ import { useEffect } from 'react'
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { Zap } from 'lucide-react'
 
+import { useOrientation } from '../layout.js'
+
 export default function TriggerNode({ id, data }) {
   const updateNodeInternals = useUpdateNodeInternals()
+  const { isVertical } = useOrientation()
 
+  /* Moving a handle between the sides and the top/bottom needs this, or the
+     edges keep their old anchors and leave the box from where it used to be. */
   useEffect(() => {
     updateNodeInternals(id)
-  }, [id, updateNodeInternals])
+  }, [id, isVertical, updateNodeInternals])
 
   return (
     <div
@@ -17,7 +22,7 @@ export default function TriggerNode({ id, data }) {
         data.onSelect?.(id)
       }}
     >
-      <Handle type="source" position={Position.Right} id="main" />
+      <Handle type="source" position={isVertical ? Position.Bottom : Position.Right} id="main" />
 
       <div className="flex items-start gap-2 px-2.5 pb-1.5 pt-2.5">
         <div className="grid size-7 place-items-center rounded-md bg-info-bg text-info-fg">

@@ -79,6 +79,29 @@ from the palette, configure them in the UI, save through the app, and assert on 
 visible state. Never call the API directly from a Playwright test with `fetch()` or raw HTTP
 requests — that skips the actual user path and hides the bug the browser would trigger.
 
+Three assertions are **mandatory in every UI spec**; a green report without them is not a
+pass. The helpers are in `designer/tests/support/designer.js` — use them rather than writing
+the assertion again.
+
+- `expectRunPassed(page, steps)` — no failed step and **no skipped step**. A step whose
+  upstream delivered nothing is skipped, not failed, and the run still reports success, so
+  checking only the run badge passes while half the process never ran. The gate is
+  `Steps · n/n` with Succeeded as the only status badge; pending or running means the poll
+  gave up early.
+- `expectNoDisconnectedStep(page)` — before every save and after the run. Every step is
+  reached by the trigger box or another step. Assert it per step id with a retrying
+  `toHaveCount`, never one `evaluateAll` snapshot of the graph: the canvas re-renders while
+  the editor works.
+- Under a minute. `timeout: 60_000` in `playwright.config.js`, 30 s for a queued run. A spec
+  that needs longer is reporting a stuck engine or a hanging wait — let it fail. Never raise
+  the ceiling with `test.setTimeout`.
+
+Read the API token in Node via `authToken()` (env, then `.env`, then `.process_engine_auth`) —
+never hard-code one, never fetch it from the page. Tidy the canvas (Ctrl+Shift+L) before
+opening a step: palette drops overlap. Address controls by role
+(`getByRole('textbox', { name: 'Query' })`) — the **ƒx** button's `aria-label` contains the
+field title, so `getByLabel` matches two elements.
+
 ## Invariants — changing these breaks saved data or the design
 
 - **The graph is a DAG.** `validate()` rejects cycles. Iteration is the `for_each` plugin
@@ -128,9 +151,8 @@ requests — that skips the actual user path and hides the bug the browser would
   (`enqueue_run`) so it is visible at once and re-dispatchable after a restart.
 - **There is one execution mode, and it is not a mode.** The API writes **every** job to the
   `job_queue` table and executes nothing itself — background runs, the designer's Run button
-  and single-step previews alike. Nothing happens until an engine is up. There is no switch:
-  the old `PROCESS_ENGINE_QUEUE` and `PROCESS_ENGINE_RUN_WORKERS` variables are gone and
-  nothing reads them. Engines run `python -m process_engine` to claim and execute
+  and single-step previews alike. Nothing happens until an engine is up. There is no switch,
+  and no environment variable changes it. Engines run `python -m process_engine` to claim and execute
   (`claim_job`'s guarded `UPDATE` is the lock; `_renewed_claim` keeps touching the row so a
   slow run is not mistaken for a dead one; a lapsed lease lets another engine reclaim and
   replay). SQLite is fine for one machine; a shared MySQL/Postgres is required across hosts.

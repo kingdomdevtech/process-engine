@@ -32,6 +32,12 @@ applyTo: "tests/**/*.py"
   palette, configure them in the editor, save via the app, and assert on the visible process
   state. They never call `/api/*` directly from the script — a direct API request is not a
   user flow and is explicitly disallowed.
+- A UI spec passes only with all three mandatory gates, from
+  `designer/tests/support/designer.js`: `expectRunPassed(page, steps)` (no failed **and no
+  skipped** step — `Steps · n/n`, Succeeded the only badge), `expectNoDisconnectedStep(page)`
+  (every step reached by the trigger box or another step, asserted per step id with a retrying
+  `toHaveCount`), and the 60-second per-test ceiling in `playwright.config.js` — a slow UI spec
+  is a bug report, so never lift it with `test.setTimeout`.
 
 What the suites guard, so a change lands in the right one:
 

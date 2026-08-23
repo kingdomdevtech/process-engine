@@ -13,3 +13,4 @@ node_modules/
 designer/dist/
 .DS_Store
 workdir/
+test-results/

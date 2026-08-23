@@ -26,12 +26,19 @@ restart it rather than doing so unprompted.
 ## 2. Start the servers (background, logs to a file)
 
 The venv lives at `.venv`; call its interpreter directly rather than activating.
+**Source `.env` first if it exists** — `start-local.sh` does, so a server started
+without it lands on the SQLite fallback while everything else is on the MySQL
+container, and the two disagree about every process and run. That database has to
+be up: `docker compose up -d mysql`.
 
 ```bash
-cd "<repo root>" && .venv/Scripts/python.exe -m process_engine_api > /tmp/pe-api.log 2>&1
-cd "<repo root>" && .venv/Scripts/python.exe -m process_engine > /tmp/pe-engine.log 2>&1
+cd "<repo root>" && set -a && . ./.env && set +a && .venv/Scripts/python.exe -m process_engine_api > /tmp/pe-api.log 2>&1
+cd "<repo root>" && set -a && . ./.env && set +a && .venv/Scripts/python.exe -m process_engine > /tmp/pe-engine.log 2>&1
 cd "<repo root>/designer" && npm run dev > /tmp/pe-designer.log 2>&1
 ```
+
+`.env` must have LF line endings, or every value picks up a trailing `\r` and the
+DB URL and token break in ways that read as a wrong password.
 
 All three with `run_in_background: true`. API → http://127.0.0.1:8000 (docs at
 `/docs`), designer → http://localhost:5173 (proxies `/api` to :8000).
@@ -52,12 +59,16 @@ If `.venv` or `designer/node_modules` is missing, install first:
 
 ## 3. Drive the API
 
-The static admin token is the generated `.process_engine_auth` file (gitignored).
-Every `/api` route except `/api/auth/login`, the SSO endpoints and `/api/hooks/*`
-needs it as a bearer credential. Do not echo the token into the transcript.
+The static admin token is `PROCESS_ENGINE_AUTH_TOKEN` when `.env` sets it, and the
+generated `.process_engine_auth` file otherwise — the env var wins, so read `.env`
+first or you will authenticate against the wrong one. Both are gitignored. Every
+`/api` route except `/api/auth/login`, the SSO endpoints, `/api/health` and
+`/api/hooks/*` needs it as a bearer credential. Do not echo the token into the
+transcript.
 
 ```bash
-TOKEN=$(cat .process_engine_auth | tr -d '\r\n')
+TOKEN=$(grep -h '^PROCESS_ENGINE_AUTH_TOKEN=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r\n')
+TOKEN=${TOKEN:-$(cat .process_engine_auth | tr -d '\r\n')}
 curl -s -o /dev/null -w "health:%{http_code}\n" http://127.0.0.1:8000/api/health
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/plugins   # registered plugins
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/processes # saved processes
@@ -111,6 +122,19 @@ show the plugin palette, the step nodes on the canvas, and the right-hand rail.
 
 If the target process name differs, click whatever card the dashboard actually
 shows — or create one with **New process** and drop a step from the palette.
+
+The snippet above is for *looking* at a running stack. The committed browser
+suite is `designer/tests/*.spec.js` (`@playwright/test`, node), and it is the one
+that has to pass:
+
+```powershell
+cd designer; npx playwright test --reporter=line
+```
+
+Its rules are in CLAUDE.md under _Browser tests must go through the designer UI_:
+never call `/api/...` from inside the page, and every spec asserts
+`expectRunPassed` (no failed and no skipped step) and `expectNoDisconnectedStep`
+within the 60-second per-test ceiling.
 
 ## 5. Report
 

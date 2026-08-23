@@ -20,15 +20,23 @@ class ForEachConfig(BaseModel):
         default="next_step",
         title="How to iterate",
         description="Default: hand each item to the next step in the graph. Switch to 'process' to run a published sub-process once per item.",
-        json_schema_extra=ui(),
+        json_schema_extra=ui(
+            labels={
+                "next_step": "Hand every item to the next step",
+                "process": "Run a published process once per item",
+            },
+        ),
     )
     items: Any = Field(
         default=None,
         title="List to work through",
-        description="Usually auto-detected from the previous step. Leave empty to use the upstream list "
-        "that arrived on this input.",
+        # Which list this iterates is the whole point of the step, so it is on
+        # the form rather than behind "Advanced" — with the graph answering it:
+        # `detect="array"` fills it from the connected step's recorded output.
+        description="Detected from the step above: the first list in its output. Leave it empty to "
+        "iterate whatever list arrives on this input.",
         examples=["{{ steps.fetch.output.rows }}"],
-        json_schema_extra=ui(advanced=True, placeholder="auto-detect from previous step"),
+        json_schema_extra=ui(detect="array", placeholder="detect from the previous step"),
     )
     process_id: str | None = Field(
         default=None,

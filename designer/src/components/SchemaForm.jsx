@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronRight, Wand2 } from 'lucide-react'
+import { api } from '../api.js'
 import DataPicker from './DataPicker.jsx'
 import HtmlField from './HtmlField.jsx'
 import ColorField from './fields/ColorField.jsx'
@@ -81,6 +82,87 @@ function placeholderFor(spec) {
   return String(example)
 }
 
+/**
+ * The expression addressing the first value of `kind` in what the steps above
+ * this one produce — how a field with an `x-ui.detect` hint gets filled.
+ *
+ * The picker's groups arrive trigger-first, then every ancestor in definition
+ * order, so the search runs backwards: the step nearest this one wins. Before
+ * the process has ever run there is no recorded output to look inside, and the
+ * nearest step's whole output is the closest true answer — `for_each` digs the
+ * list out of it at run time.
+ */
+function detectPath(groups, kind) {
+  const upstream = (groups ?? []).filter((group) => group.key !== 'trigger')
+  for (let index = upstream.length - 1; index >= 0; index -= 1) {
+    const match = (upstream[index].fields ?? []).find((field) => field.type === kind)
+    if (match) return match.path
+  }
+  return upstream[upstream.length - 1]?.fields?.[0]?.path ?? null
+}
+
+/**
+ * "Which list is this?" answered by the graph instead of typed.
+ *
+ * It fills an empty field on its own the first time the panel opens — the
+ * detection is the field's documented default, so making someone press a
+ * button to get it would be asking them to confirm what they already asked
+ * for — and stays available afterwards for a field that needs re-pointing
+ * once the connection above it changes.
+ */
+function DetectAction({ kind, processId, stepId, isEmpty, onDetect }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const attempted = useRef(false)
+  const apply = useRef(onDetect)
+  apply.current = onDetect
+
+  const detect = useCallback(async () => {
+    if (!processId) return
+    setBusy(true)
+    try {
+      const { groups } = await api.get(`/api/processes/${processId}/steps/${stepId}/picker`)
+      const path = detectPath(groups, kind)
+      if (path) {
+        setNote('')
+        apply.current(path)
+      } else {
+        setNote('Nothing above this step to take a list from.')
+      }
+    } catch (error) {
+      /* Detection reads the saved graph, so a step added since the last save is
+         not there to look above yet. */
+      setNote(error.status === 404 ? 'Save the process, then detect what the step above delivers.' : String(error.message))
+    } finally {
+      setBusy(false)
+    }
+  }, [processId, stepId, kind])
+
+  useEffect(() => {
+    if (attempted.current || !isEmpty || !processId) return
+    attempted.current = true
+    detect()
+  }, [isEmpty, processId, detect])
+
+  return (
+    <button
+      type="button"
+      className="flex items-center gap-1 rounded border border-line bg-surface px-1.5 py-px text-[10px] font-semibold text-brand-text transition-colors hover:border-brand hover:bg-brand-soft disabled:opacity-50"
+      title={
+        processId
+          ? note || 'Read the connected step above and fill this in'
+          : 'Save the process first — detection reads the step above this one'
+      }
+      aria-label="Detect from the previous step"
+      disabled={busy || !processId}
+      onClick={detect}
+    >
+      <Wand2 size={11} aria-hidden="true" />
+      {busy ? 'Detecting…' : 'Detect'}
+    </button>
+  )
+}
+
 /** A field is shown while the field its `showIf` names holds one of the listed values. */
 function isVisible(spec, config, properties) {
   const rule = hintsOf(spec).showIf
@@ -143,7 +225,13 @@ function JsonField({ value, onCommit, strict, example, id, describedBy }) {
  * a string, which is what the comparison in a Condition step needs.
  */
 function ValueField({ value, onCommit, placeholder, id, describedBy }) {
-  const [text, setText] = useState(value === undefined || value === null ? '' : String(value))
+  const asText = value === undefined || value === null ? '' : String(value)
+  const [text, setText] = useState(asText)
+
+  /* Typing only moves `text` — the value is committed on blur — so this fires
+     for a change that came from outside the form (ƒx, Detect) and would
+     otherwise fill the config without the field ever showing it. */
+  useEffect(() => setText(asText), [asText])
 
   const commit = () => {
     const trimmed = text.trim()
@@ -398,6 +486,8 @@ export default function SchemaForm({ nodeId, schema, config, onChange, processes
 
   const renderField = ({ name, spec }) => {
     const value = config[name]
+    const detect = hintsOf(spec).detect
+    const assignable = isAssignable(spec, value)
     return (
       <Field
         key={`${nodeId}:${name}`}
@@ -405,16 +495,29 @@ export default function SchemaForm({ nodeId, schema, config, onChange, processes
         required={required.has(name)}
         description={spec.description}
         action={
-          isAssignable(spec, value) && (
-            <button
-              type="button"
-              className="rounded border border-line bg-surface px-1.5 py-px text-[10px] font-semibold text-brand-text transition-colors hover:border-brand hover:bg-brand-soft"
-              title="Insert a value from an earlier step"
-              aria-label={`Insert a value from an earlier step into ${spec.title || name}`}
-              onClick={() => pickExpression(spec.title || name, (expression) => assign(name, expression))}
-            >
-              ƒx
-            </button>
+          (detect || assignable) && (
+          <span className="flex items-center gap-1">
+            {detect && (
+              <DetectAction
+                kind={detect}
+                processId={processId}
+                stepId={nodeId}
+                isEmpty={value === undefined || value === null || value === ''}
+                onDetect={(expression) => onChange(name, expression)}
+              />
+            )}
+            {assignable && (
+              <button
+                type="button"
+                className="rounded border border-line bg-surface px-1.5 py-px text-[10px] font-semibold text-brand-text transition-colors hover:border-brand hover:bg-brand-soft"
+                title="Insert a value from an earlier step"
+                aria-label={`Insert a value from an earlier step into ${spec.title || name}`}
+                onClick={() => pickExpression(spec.title || name, (expression) => assign(name, expression))}
+              >
+                ƒx
+              </button>
+            )}
+          </span>
           )
         }
       >

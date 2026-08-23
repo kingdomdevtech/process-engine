@@ -80,7 +80,36 @@ const MINIMAP_COLORS = {
   cancelled: 'var(--alt-fg)',
   skipped: 'var(--line-strong)',
 }
+/* Where a laid-out flow starts. The trigger box is pinned at (90, 140) and is
+   the arrow every root step comes from, so the layout begins clear of it —
+   at the origin the first step lands on top of it and its arrow doubles back. */
+const LAYOUT_ORIGIN = {
+  horizontal: { x: 380, y: 140 },
+  vertical: { x: 90, y: 300 },
+}
 let stepCounter = 0
+
+/* The plain "and then" arrow: main port to main port. Every connection the
+   editor makes for you is one of these — a new step joining the end of the
+   flow, or the Input tab re-pointing a step at a different source. */
+function mainEdge(source, target) {
+  return {
+    id: source === TRIGGER_NODE_ID ? `${TRIGGER_NODE_ID}-to-${target}` : `${source}->${target}`,
+    source,
+    target,
+    sourceHandle: 'main',
+    targetHandle: 'main',
+    type: 'smoothstep',
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    animated: true,
+    style: { stroke: 'var(--line-strong)' },
+  }
+}
+
+function placed(positions, direction) {
+  const origin = LAYOUT_ORIGIN[direction] ?? LAYOUT_ORIGIN.horizontal
+  return new Map([...positions].map(([id, at]) => [id, { x: at.x + origin.x, y: at.y + origin.y }]))
+}
 
 function spreadStepPosition(position, index) {
   const slot = index % 9
@@ -259,6 +288,48 @@ function EditorInner() {
     [record, setEdges],
   )
 
+  /* Re-point a step's incoming arrow. "Where does this step's work come from?"
+     is a question about the graph, so the Input tab answering it edits the
+     graph rather than shadowing it, and the canvas cannot end up disagreeing
+     with the panel. A step takes its work from one place, so the arrow that
+     was there goes; choosing the trigger box means having none at all. */
+  const connectFrom = useCallback(
+    (targetId, sourceId) => {
+      record()
+      setDirty(true)
+      setEdges((eds) => {
+        const kept = eds.filter((edge) => edge.target !== targetId)
+        if (sourceId === TRIGGER_NODE_ID) return kept
+        return kept.concat(mainEdge(sourceId, targetId))
+      })
+    },
+    [record, setEdges],
+  )
+
+  /* Everything reachable from a step. The graph has to stay acyclic, so these
+     are exactly the steps the Input tab must not offer as a source: picking one
+     would draw an arrow back into the flow and `validate()` would reject the
+     save. */
+  const descendantsOf = useCallback(
+    (stepId) => {
+      const outgoing = new Map()
+      for (const edge of edges) {
+        if (!outgoing.has(edge.source)) outgoing.set(edge.source, [])
+        outgoing.get(edge.source).push(edge.target)
+      }
+      const reached = new Set()
+      const queue = [...(outgoing.get(stepId) ?? [])]
+      while (queue.length) {
+        const next = queue.pop()
+        if (reached.has(next)) continue
+        reached.add(next)
+        queue.push(...(outgoing.get(next) ?? []))
+      }
+      return reached
+    },
+    [edges],
+  )
+
   const onDragOver = useCallback((event) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -291,24 +362,17 @@ function EditorInner() {
           },
         }
 
+        /* A new step joins the end of the flow: the one added before it feeds
+           it. The very first step needs no edge — nothing upstream is what
+           "starts from the trigger" means, and the trigger arrow is drawn from
+           that fact (see `canvasEdges`). */
         const priorStep = [...nds].reverse().find((node) => node.id !== TRIGGER_NODE_ID && node.type === 'step')
-        const sourceId = priorStep ? priorStep.id : TRIGGER_NODE_ID
-        setEdges((eds) => {
-          if (eds.some((edge) => edge.target === nextId)) return eds
-          if (!sourceId) return eds
-          const edgeId = sourceId === TRIGGER_NODE_ID ? `${TRIGGER_NODE_ID}-to-${nextId}` : `${sourceId}->${nextId}`
-          return eds.concat({
-            id: edgeId,
-            source: sourceId,
-            target: nextId,
-            sourceHandle: 'main',
-            targetHandle: 'main',
-            type: 'smoothstep',
-            markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-            animated: true,
-            style: { stroke: 'var(--line-strong)' },
+        if (priorStep) {
+          setEdges((eds) => {
+            if (eds.some((edge) => edge.target === nextId)) return eds
+            return eds.concat(mainEdge(priorStep.id, nextId))
           })
-        })
+        }
 
         setSelectedId(nextId)
         return nds.concat(nextStep)
@@ -349,9 +413,12 @@ function EditorInner() {
       if (!nodes.length) return false
       record()
       setDirty(true)
-      const positions = layoutGraph(
-        nodes.map((node) => node.id),
-        edges,
+      const positions = placed(
+        layoutGraph(
+          nodes.map((node) => node.id),
+          edges,
+          direction,
+        ),
         direction,
       )
       setNodes((nds) => nds.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position })))
@@ -563,9 +630,12 @@ function EditorInner() {
          back: the layout is deterministic, so it is the same on every open
          until someone moves a step and saves. */
       const layout = needsLayout(definition.steps)
-        ? layoutGraph(
-            definition.steps.map((step) => step.id),
-            definition.connections,
+        ? placed(
+            layoutGraph(
+              definition.steps.map((step) => step.id),
+              definition.connections,
+              orientation,
+            ),
             orientation,
           )
         : null
@@ -855,26 +925,86 @@ function EditorInner() {
     [edges, runStatusByStep],
   )
 
+  /* The trigger box is drawn but not part of the definition, so it is not in
+     `nodes` — which means the size React Flow measures for it has nowhere to be
+     written back to (see `onNodesChange` below, which drops its changes). It
+     still has to be kept: React Flow re-reads a node's handle positions from
+     the DOM only while the node object carries `measured`, and rebuilds them as
+     "unknown" otherwise — and an edge whose source handle has no position is
+     not drawn at all. Without this, the derived trigger arrow disappeared the
+     moment anything rebuilt the node array, which is every keystroke in a
+     config field. */
+  const [triggerSize, setTriggerSize] = useState(null)
+  const triggerSelected = selectedId === TRIGGER_NODE_ID
+
   const visibleTriggerNode = useMemo(
     () => ({
       id: TRIGGER_NODE_ID,
       type: 'trigger',
       position: { x: 90, y: 140 },
-      data: { label: 'Trigger', onSelect: setSelectedId },
+      data: { label: 'Trigger', plugin: 'trigger', onSelect: setSelectedId },
       hidden: false,
       draggable: false,
       selectable: true,
+      selected: triggerSelected,
       style: { visibility: 'visible' },
+      ...(triggerSize ? { measured: triggerSize } : null),
     }),
-    [],
+    [triggerSize, triggerSelected],
   )
 
+  /* One object per step, rebuilt only when the selection or the step changes —
+     and the trigger node passed through by reference, so React Flow can tell it
+     is the same node it measured. */
   const canvasNodes = useMemo(
-    () => [visibleTriggerNode, ...nodes].map((node) => ({ ...node, selected: selectedId === node.id })),
+    () => [visibleTriggerNode, ...nodes.map((node) => ({ ...node, selected: selectedId === node.id }))],
     [visibleTriggerNode, nodes, selectedId],
   )
-  const canvasEdges = useMemo(() => edges, [edges])
+  /* The trigger arrow is drawn from the graph, not stored in it. A step with
+     nothing upstream is what "starts from the trigger" means — that is the step
+     the engine hands the trigger payload to — so deriving the arrow keeps the
+     canvas honest for free: it survives a save and reload (connections to the
+     trigger box are not part of a definition), it appears on whatever step a
+     deletion left at the front, and it cannot be dragged away to leave a step
+     looking connected to nothing. */
+  /* Keyed on the ids rather than on `nodes`, because `nodes` changes on every
+     keystroke in a config field: rebuilding the arrow objects that often makes
+     React Flow remount the edge while someone is typing, which flickers. */
+  const rootIds = useMemo(() => {
+    const fed = new Set(edges.map((edge) => edge.target))
+    return nodes
+      .filter((node) => !fed.has(node.id))
+      .map((node) => node.id)
+      .join(' ')
+  }, [nodes, edges])
+  const canvasEdges = useMemo(
+    () => [
+      ...edges,
+      ...(rootIds ? rootIds.split(' ') : []).map((id) => mainEdge(TRIGGER_NODE_ID, id)),
+    ],
+    [edges, rootIds],
+  )
   const selectedNodeIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId])
+
+  /* What React Flow is actually handed. `selected` is re-applied *after* the
+     decoration because `decoratedNodes` is rebuilt from `nodes`, which does not
+     carry it: taking the decorated copy wholesale drops the selection
+     `canvasNodes` just computed, React Flow reports an empty selection back
+     through `onSelectionChange`, and `selectedId` is reset — which is why
+     adding a step used to leave its config form unopened. `selectedId` is the
+     one authority on what is selected. */
+  const renderedNodes = useMemo(
+    () =>
+      canvasNodes.map((node) =>
+        node.id === TRIGGER_NODE_ID
+          ? node
+          : {
+              ...(decoratedNodes.find((candidate) => candidate.id === node.id) ?? node),
+              selected: node.selected,
+            },
+      ),
+    [canvasNodes, decoratedNodes],
+  )
 
   const selectedNode =
     selectedId === TRIGGER_NODE_ID
@@ -885,11 +1015,45 @@ function EditorInner() {
     ? [...(clientIssues[selectedNode.id] ?? []), ...(serverIssues.byStep[selectedNode.id] ?? [])]
     : []
 
+  /* What the selected step is allowed to take its work from, and what it takes
+     it from now. Both are read off the canvas, so the Input tab's source list is
+     a view of the graph rather than a second copy of it. */
+  const sourceChoices = useMemo(() => {
+    if (!selectedNode || selectedId === TRIGGER_NODE_ID) return []
+    const downstream = descendantsOf(selectedNode.id)
+    return nodes
+      .filter((node) => node.id !== selectedNode.id && !downstream.has(node.id))
+      .map((node) => ({ id: node.id, label: node.data.label }))
+  }, [nodes, selectedNode, selectedId, descendantsOf])
+
+  const connectedSource = useMemo(() => {
+    if (!selectedNode) return TRIGGER_NODE_ID
+    return edges.find((edge) => edge.target === selectedNode.id)?.source ?? TRIGGER_NODE_ID
+  }, [edges, selectedNode])
+
+  /* A step that can hand its work to a whole process rather than to the next
+     step says so in its own schema — `for_each` has a `process_id` — which is
+     how the Input tab offers processes without knowing that plugin exists. The
+     condition hiding the field comes along, because writing a field the form is
+     not showing would fill the config invisibly. */
+  const processField = useMemo(() => {
+    const spec = selectedPlugin?.config_schema?.properties?.process_id
+    return spec ? { name: 'process_id', gate: spec['x-ui']?.showIf ?? null } : null
+  }, [selectedPlugin])
+
   const issueCount = useMemo(
     () =>
       Object.values(clientIssues).reduce((total, list) => total + list.length, 0) +
       Object.values(serverIssues.byStep).reduce((total, list) => total + list.length, 0),
     [clientIssues, serverIssues],
+  )
+
+  /* A process cannot be its own sub-process: every item would start the same
+     process again, and the only thing stopping it is the engine's depth cap.
+     Nobody means that, so it is not on the menu. */
+  const otherProcesses = useMemo(
+    () => processes.filter((process) => process.id !== processId),
+    [processes, processId],
   )
 
   const knownFolders = useMemo(
@@ -1071,11 +1235,7 @@ function EditorInner() {
           )}
 
           <ReactFlow
-            nodes={canvasNodes.map((node) =>
-              node.id === TRIGGER_NODE_ID
-                ? { ...node, data: { ...node.data, plugin: 'trigger' } }
-                : decoratedNodes.find((candidate) => candidate.id === node.id) ?? node,
-            )}
+            nodes={renderedNodes}
             edges={canvasEdges.map((edge) =>
               edge.source === TRIGGER_NODE_ID || edge.target === TRIGGER_NODE_ID
                 ? { ...edge }
@@ -1086,6 +1246,16 @@ function EditorInner() {
             defaultEdgeOptions={defaultEdgeOptions}
             defaultViewport={readStoredViewport()}
             onNodesChange={(changes) => {
+              /* The trigger box is not in `nodes`, so its changes have nowhere
+                 to be applied — except the measurement, which `visibleTriggerNode`
+                 has to carry or its arrow loses the handle it starts from. */
+              for (const change of changes) {
+                if (change.id !== TRIGGER_NODE_ID || change.type !== 'dimensions' || !change.dimensions) continue
+                const { width, height } = change.dimensions
+                setTriggerSize((current) =>
+                  current?.width === width && current?.height === height ? current : { width, height },
+                )
+              }
               onNodesChange(changes.filter((change) => change.id !== TRIGGER_NODE_ID))
             }}
             onMoveEnd={(_, viewport) => {
@@ -1246,13 +1416,27 @@ function EditorInner() {
                     onConfigField(selectedNode.id, field, expression)
                     toast.ok(`Assigned to “${field}”`)
                   }}
+                  steps={sourceChoices}
+                  processes={otherProcesses}
+                  connectedTo={connectedSource}
+                  onConnect={(sourceId) => connectFrom(selectedNode.id, sourceId)}
+                  processField={processField}
+                  processValue={selectedNode.data.config?.process_id ?? ''}
+                  onPickProcess={(chosen) => {
+                    if (!processField) return
+                    onConfigField(selectedNode.id, processField.name, chosen)
+                    if (processField.gate) {
+                      onConfigField(selectedNode.id, processField.gate.field, processField.gate.in[0])
+                    }
+                    toast.ok('Runs this process once per item')
+                  }}
                 />
               )}
               {inspectorTab === 'config' && (
                 <StepPanel
                   node={selectedNode}
                   plugin={selectedPlugin}
-                  processes={processes}
+                  processes={otherProcesses}
                   processId={processId}
                   issues={selectedIssues}
                   onRename={onRename}

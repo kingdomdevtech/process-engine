@@ -7,26 +7,66 @@ import JsonTree from './JsonTree.jsx'
 const TRIGGER = '__trigger__'
 
 /**
- * The step input panel exposes exactly the sources the graph can legally feed
- * it: the trigger payload, or the output of an upstream step. The raw
- * combined-input view is a debugging aid, not a UX choice for normal editing.
+ * The step input panel: where this step's work comes from, and what arrived
+ * from there last time.
+ *
+ * The source list is the answer to a question about the graph, so choosing
+ * from it edits the graph. Two kinds of source can answer it:
+ *
+ * - **a step** (or the trigger box, which is where the process itself starts) —
+ *   picking one re-points this step's incoming arrow at it, so the canvas and
+ *   this panel can never disagree about what feeds this step. Only steps that
+ *   cannot already be reached *from* here are offered: the graph is a DAG, and
+ *   an arrow back would be a cycle the save would reject.
+ * - **a published process**, offered only for a step that can actually take one
+ *   (`for_each` runs one per item). That is not an arrow on this canvas, so it
+ *   is wired by writing the step's own process field instead — the incoming
+ *   arrow, which still delivers the list to iterate, is left alone.
+ *
+ * The raw combined-input view is a debugging aid, not a UX choice for normal
+ * editing, so it is deliberately not offered here.
  */
-export default function StepInput({ processId, stepId, fields, onAssign }) {
+export default function StepInput({
+  processId,
+  stepId,
+  fields,
+  onAssign,
+  steps = [],
+  processes = [],
+  connectedTo = TRIGGER,
+  onConnect,
+  processField = null,
+  processValue = '',
+  onPickProcess,
+}) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const [source, setSource] = useState(TRIGGER)
+  const [choice, setChoice] = useState(
+    processField && processValue ? `process:${processValue}` : connectedTo === TRIGGER ? TRIGGER : `step:${connectedTo}`,
+  )
   const [target, setTarget] = useState(fields[0] ?? '')
 
   const load = useCallback(() => {
     if (!processId) {
-      setError('Save the process first to inspect its data.')
+      setError('Save the process to see the values that reach this step.')
       return
     }
     setError('')
     api
       .get(`/api/processes/${processId}/steps/${stepId}/input`)
-      .then(setData)
-      .catch((err) => setError(String(err.message)))
+      .then((answer) => {
+        setError('')
+        setData(answer)
+      })
+      /* A step that has not been saved yet is not in the definition the server
+         holds, so it has no values to report — which is a note beside the tree,
+         not a broken panel. Where the work comes from is answered by the canvas
+         and stays editable either way. */
+      .catch((err) =>
+        setError(
+          err.status === 404 ? 'Save the process to see the values that reach this step.' : String(err.message),
+        ),
+      )
   }, [processId, stepId])
 
   useEffect(() => {
@@ -37,29 +77,18 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
     if (!fields.includes(target)) setTarget(fields[0] ?? '')
   }, [fields, target])
 
+  /* The canvas is the authority on what feeds this step, so a connection made
+     out there (dragging an edge, deleting one) moves this selection too —
+     except while a process is selected, which is a view of something the graph
+     does not draw. */
   useEffect(() => {
-    if (!data) return
-    const available = data.sources.map((entry) => entry.step_id)
-    const defaultSource = available.length > 0 ? available[0] : TRIGGER
+    setChoice((current) => {
+      if (current.startsWith('process:')) return current
+      return connectedTo === TRIGGER ? TRIGGER : `step:${connectedTo}`
+    })
+  }, [connectedTo])
 
-    if (available.length === 0) {
-      if (source !== TRIGGER) setSource(TRIGGER)
-      return
-    }
-
-    if (!available.includes(source)) {
-      setSource(defaultSource)
-    }
-  }, [data, source])
-
-  if (error) {
-    return (
-      <div className="panel">
-        <p className="error-text">{error}</p>
-      </div>
-    )
-  }
-  if (!data) {
+  if (!data && !error) {
     return (
       <div className="panel">
         <div className="skeleton h-32" />
@@ -67,20 +96,22 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
     )
   }
 
-  const options = [
-    { key: TRIGGER, label: 'Trigger data' },
-    ...data.sources.map((entry) => ({
-      key: entry.step_id,
-      label: `${entry.label}${entry.source_port === 'main' ? '' : ` · ${entry.source_port}`}`,
-    })),
-  ]
+  const sources = data?.sources ?? []
+  const pickedProcess = choice.startsWith('process:')
+    ? processes.find((process) => process.id === choice.slice('process:'.length))
+    : null
+  const pickedStepId = choice.startsWith('step:') ? choice.slice('step:'.length) : null
+  const selected = pickedStepId ? sources.find((entry) => entry.step_id === pickedStepId) : null
+  const pickedStep = pickedStepId ? steps.find((step) => step.id === pickedStepId) : null
 
-  const selected = data.sources.find((entry) => entry.step_id === source)
   let shown
   let basePath = ''
   let label = 'input'
-  if (source === TRIGGER) {
-    shown = data.trigger
+  if (pickedProcess) {
+    shown = undefined
+    label = pickedProcess.name
+  } else if (!pickedStepId) {
+    shown = data?.trigger
     basePath = '{{ trigger'
     label = 'trigger'
   } else if (selected) {
@@ -90,6 +121,15 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
         ? `{{ steps.${selected.reference}.output`
         : `{{ steps.${selected.reference}.outputs.${selected.source_port}`
     label = selected.label
+  } else {
+    label = pickedStep?.label ?? 'input'
+  }
+
+  const change = (value) => {
+    setChoice(value)
+    if (value.startsWith('process:')) onPickProcess?.(value.slice('process:'.length))
+    else if (value.startsWith('step:')) onConnect?.(value.slice('step:'.length))
+    else onConnect?.(TRIGGER)
   }
 
   const pick = (path) => {
@@ -112,7 +152,9 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
       </div>
 
       <p className="hint mb-2">
-        {data.run_id ? (
+        {error ? (
+          error
+        ) : data.run_id ? (
           <>
             Values from run{' '}
             <code className="code" title={data.run_id}>
@@ -125,32 +167,60 @@ export default function StepInput({ processId, stepId, fields, onAssign }) {
         )}
       </p>
 
-      <select
-        className="select"
-        aria-label="Input source"
-        value={source}
-        onChange={(event) => setSource(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.key} value={option.key}>
-            {option.label}
-          </option>
-        ))}
+      <select className="select" aria-label="Input source" value={choice} onChange={(event) => change(event.target.value)}>
+        <optgroup label="This process">
+          <option value={TRIGGER}>Trigger data</option>
+        </optgroup>
+        {steps.length > 0 && (
+          <optgroup label="Steps">
+            {steps.map((step) => (
+              <option key={step.id} value={`step:${step.id}`}>
+                {step.label}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {processField && processes.length > 0 && (
+          <optgroup label="Processes">
+            {processes.map((process) => (
+              <option key={process.id} value={`process:${process.id}`}>
+                {process.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
       </select>
 
-      {data.sources.length === 0 && source === TRIGGER && (
-        <p className="hint mt-1.5 flex items-start gap-1.5">
-          <Info size={12} className="mt-px shrink-0" aria-hidden="true" />
-          This step has no incoming connection, so it receives the trigger payload.
-        </p>
-      )}
-      {selected && !selected.has_data && (
-        <p className="hint mt-1.5 flex items-start gap-1.5">
-          <Info size={12} className="mt-px shrink-0" aria-hidden="true" />
-          This upstream step {selected.status ? `was ${selected.status}` : 'has not run'} in that run, so no value was
-          delivered.
-        </p>
-      )}
+      <p className="hint mt-1.5 flex items-start gap-1.5">
+        <Info size={12} className="mt-px shrink-0" aria-hidden="true" />
+        {pickedProcess ? (
+          <span>
+            Each item is handed to <strong className="font-semibold text-fg">{pickedProcess.name}</strong> as{' '}
+            <code className="code">{'{{ trigger.item }}'}</code>, with its position as{' '}
+            <code className="code">{'{{ trigger.index }}'}</code>.
+            {pickedProcess.latest_version
+              ? ` Version ${pickedProcess.latest_version} is what will run.`
+              : ' It has never been published, so publish it before this runs.'}
+          </span>
+        ) : !pickedStepId ? (
+          sources.length === 0 ? (
+            <span>Connected to the trigger box, so this step receives the run&apos;s trigger payload.</span>
+          ) : (
+            <span>Choosing this re-points the incoming arrow at the trigger box.</span>
+          )
+        ) : selected ? (
+          selected.has_data ? (
+            <span>The arrow on the canvas comes from here.</span>
+          ) : (
+            <span>
+              This upstream step {selected.status ? `was ${selected.status}` : 'has not run'} in that run, so no value
+              was delivered.
+            </span>
+          )
+        ) : (
+          <span>Arrow re-connected — save the process to load the values this step delivers.</span>
+        )}
+      </p>
 
       <div className="mt-2 max-h-80 overflow-auto rounded-md border border-line bg-surface-2 p-2">
         <JsonTree label={label} data={shown} basePath={basePath} onPick={pick} />

@@ -16,7 +16,7 @@ from process_engine.plugins._mysql import MySQLConnection
 from process_engine.plugins.mysql_execute import MySQLExecuteConfig
 from process_engine.plugins.send_email import SendEmailConfig
 from process_engine_core.registry import spec_registry
-from process_engine_core.ui import WIDGETS, ui
+from process_engine_core.ui import DETECTORS, WIDGETS, ui
 
 LIST_WIDGETS = {"tags", "emails", "files"}
 
@@ -110,6 +110,40 @@ def test_for_each_process_id_is_hidden_unless_process_mode_is_selected():
 def test_an_unknown_widget_is_rejected_where_it_is_written():
     with pytest.raises(ValueError, match="unknown widget"):
         ui(widget="slider")
+
+
+def test_declared_detectors_are_ones_the_designer_runs():
+    for key, schema in schemas():
+        for name, _, hints in hints_in(schema):
+            detect = hints.get("detect")
+            assert detect is None or detect in DETECTORS, f"{key}.{name} asks for unknown detector {detect!r}"
+
+
+def test_array_detection_is_only_offered_on_a_field_that_takes_one():
+    """The designer fills a detected field with a `{{ … }}` expression that
+    resolves to a list, so the field has to accept both — an untyped or string
+    field does, a number or a mapping never could."""
+    accepts = {None, "array", "string"}  # untyped is how an expression field is written
+    for key, schema in schemas():
+        for name, spec, hints in hints_in(schema):
+            if hints.get("detect") != "array":
+                continue
+            kinds = {spec.get("type"), *(option.get("type") for option in spec.get("anyOf", []))}
+            assert kinds <= accepts | {"null"}, f"{key}.{name} detects a list but is typed {kinds}"
+
+
+def test_an_unknown_detector_is_rejected_where_it_is_written():
+    with pytest.raises(ValueError, match="unknown detector"):
+        ui(detect="number")
+
+
+def test_for_each_offers_to_detect_the_list_it_iterates():
+    """Requirement behind the designer's "Detect from the previous step": the
+    hint has to be on the field, or the button never appears."""
+    schema = spec_registry().get("for_each").Config.model_json_schema()
+    items = schema["properties"]["items"]
+    assert items["x-ui"]["detect"] == "array"
+    assert not items["x-ui"].get("advanced"), "the list to iterate is the point of the step, not an expert knob"
 
 
 # ---- migrations ---------------------------------------------------------------

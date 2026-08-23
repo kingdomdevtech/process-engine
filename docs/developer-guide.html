@@ -421,6 +421,7 @@ class MailConfig(BaseModel):
   <tr><td><code>labels={...}</code></td><td>Human wording per enum value.</td></tr>
   <tr><td><code>secret=True</code></td><td>Offers the stored secrets by name, so nobody has to type <code>{{ secrets.x }}</code>.</td></tr>
   <tr><td><code>widget=</code></td><td>Overrides the control the type implies. Validated against <code>ui.WIDGETS</code> <em>at import time</em> — a typo raises there, not silently in the browser.</td></tr>
+  <tr><td><code>detect="array"</code></td><td>Marks a field that names a list the step above almost certainly already produces. The form fills it in from the connected upstream step the first time it opens, and offers <em>Detect from the previous step</em> to do it again after the arrow moves — see <code>for_each.items</code>. Validated against <code>ui.DETECTORS</code> at import time, like <code>widget</code>. It is a hint about where a value comes from, not a default your plugin may rely on: the field is still an expression a person can overwrite.</td></tr>
   <tr><td><code>unit=</code>, <code>placeholder=</code>, <code>add_label=</code>, <code>key_label=</code>/<code>value_label=</code></td><td>Refine the control's wording.</td></tr>
   <tr><td><code>Field(examples=[…])</code></td><td>Drives both the field placeholder and the worked example behind <em>Show example</em>. Steer that through examples rather than special-casing your plugin in the designer.</td></tr>
   <tr><td><code>format="html"</code></td><td>On a string, renders the rich HTML editor (see <code>send_email_ses.body_html</code>).</td></tr>
@@ -595,6 +596,53 @@ small <code>run_of(instance, step_id)</code> helper for exactly this.</p>
 
 <p>Finish with <code>pytest</code>, and <code>cd designer; npm run build</code> if anything under
 <code>designer/</code> changed.</p>
+
+<h3>Browser tests go through the designer</h3>
+
+<p>A Playwright spec in <code>designer/tests/</code> is a real user at the keyboard: sign in on
+<code>/login</code>, click steps out of the palette, fill the generated forms, wire the graph from
+the Input tab, save through the app, press <em>Run draft</em>, read the run timeline. It never calls
+<code>/api/…</code> from inside the page — that skips the user path, hides the validation errors a
+person would have seen, and makes the test lie about what works. The API token is read in Node by
+<code>authToken()</code> (<code>PROCESS_ENGINE_AUTH_TOKEN</code>, then <code>.env</code>, then
+<code>.process_engine_auth</code>), never hard-coded and never fetched by the page.</p>
+
+<pre><code>cd designer; npm install; npx playwright install chromium   # once
+cd designer; npx playwright test                            # needs API :8000, an engine, vite :5173</code></pre>
+
+<div class="callout warn">
+  <strong>A green Playwright report is not a passing test.</strong> Three gates are mandatory in
+  every UI spec, and the helpers for them live in <code>designer/tests/support/designer.js</code> —
+  use those rather than writing the assertion again.
+  <ul>
+    <li><code>expectRunPassed(page, steps)</code> — <strong>no failed step and no skipped
+        step</strong>. Skipped is the quiet one: a step whose upstream delivered nothing is skipped
+        rather than failed and the run still reports success, so a spec that checks only the run
+        badge passes while half the process never happened. The gate is the timeline reading
+        <code>Steps · n/n</code> with Succeeded as the only status badge in it — pending or running
+        means the poll gave up early.</li>
+    <li><code>expectNoDisconnectedStep(page)</code> — before every save and after the run. Every
+        step is reached by the trigger box or another step; one that nothing points at never runs,
+        and a canvas showing one is a process that silently does less than it looks like it does.
+        Assert it per step id with a retrying <code>toHaveCount</code>, never from one
+        <code>evaluateAll</code> snapshot of the whole graph: the canvas re-renders as the editor
+        works, and a snapshot read between two renders reports a graph that was never on screen.</li>
+    <li><strong>Under a minute</strong> — <code>timeout: 60_000</code> in
+        <code>playwright.config.js</code>, and 30 s for a queued run. Building a process, publishing
+        it, queueing a run and reading the timeline is seconds of work on a healthy stack, so a spec
+        that needs longer is reporting a problem: an engine that is not claiming, a step that is
+        retrying, a wait that is really a hang. Let it fail and name it; never lift the ceiling with
+        <code>test.setTimeout</code>.</li>
+  </ul>
+</div>
+
+<p>Two habits that come out of what these specs catch. Tidy the canvas (Ctrl+Shift+L) before
+opening any step — the palette drops steps around the middle of the view where the cards overlap,
+so clicking one of a stack is ambiguous for a person and for the test alike. And address a form
+control by role, <code>getByRole('textbox', { name: 'Query' })</code>, rather than by its label:
+the <b>ƒx</b> button beside every field carries
+<code>aria-label="Insert a value from an earlier step into <em>Title</em>"</code>, so
+<code>getByLabel('<em>Title</em>')</code> matches two elements.</p>
 
 <p class="chapter">Chapter 13</p>
 <h2 id="package">13. Packaging as a pip installable</h2>

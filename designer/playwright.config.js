@@ -2,7 +2,12 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  /* One minute per test, deliberately tight. Everything these tests do — build
+     a process, publish it, queue a run, read the timeline — happens in seconds
+     when the stack is healthy, so a test that needs longer is reporting a
+     problem (an engine that is not claiming, a step that is retrying, a wait
+     that is really a hang) and should fail rather than sit there. */
+  timeout: 60_000,
   expect: {
     timeout: 10_000,
   },

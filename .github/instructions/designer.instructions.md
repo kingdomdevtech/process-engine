@@ -20,8 +20,12 @@ here. If a plugin needs a different control, the answer is an `x-ui` hint or a `
 on the Python side, not a special case in `SchemaForm.jsx`.
 
 - `SchemaForm.jsx` picks a control from the JSON Schema type, then refines it with `x-ui`
-  (`group`, `advanced`, `widget`, `showIf`, `labels`, `secret`, `unit`, `placeholder`, …).
-  Field components live in `components/fields/`.
+  (`group`, `advanced`, `widget`, `showIf`, `labels`, `secret`, `unit`, `placeholder`,
+  `detect`, …). Field components live in `components/fields/`.
+- `detect: "array"` marks a field that names a list the step above already produces: the form
+  fills it from the connected upstream step the first time it opens, and offers *Detect from
+  the previous step* to do it again after the arrow moves. A hint, not a default — the field
+  stays an expression a person can overwrite.
 - `pluginMeta.jsx` is a *fallback* lookup for icons and category tints, keyed by plugin key
   then category — an unknown plugin still renders.
 - `schemaExample.js` turns a config schema into the JSON behind *Show example* and into field
@@ -59,6 +63,25 @@ keeps light and dark in sync and makes a rebrand one edit.
   to move handles between the sides and the top/bottom; moving a handle needs
   `useUpdateNodeInternals` or the edges keep their old anchors. Flipping direction re-runs the
   layout, since old positions leave every edge doubling back.
+- **The graph the editor holds is not the graph it draws.** A step with nothing upstream is
+  the one the engine hands the trigger payload to, so the arrow from the trigger box is
+  derived from that (`rootIds` → `canvasEdges` in `Editor.jsx`), never stored: it survives a
+  reload, moves to whatever step a deletion left at the front, and cannot be dragged away.
+  A new step joins the end of the flow — the step added before it feeds it.
+- The trigger node is derived too, so React Flow's changes to it have nowhere to be applied —
+  but keep its **measurement** (`triggerSize`). React Flow re-reads a node's handle positions
+  from the DOM only while the node object carries `measured`, and does not draw an edge whose
+  source handle has no position, so dropping it makes the trigger arrow vanish on every
+  keystroke in a config field.
+- `renderedNodes` re-applies `selected` *after* decorating a node: `decoratedNodes` is rebuilt
+  from `nodes`, which does not carry it, and handing React Flow the decorated copy wholesale
+  makes it report an empty selection back through `onSelectionChange`. `selectedId` is the one
+  authority on what is selected.
+- `StepInput`'s source select **edits** the graph rather than shadowing it — picking a step
+  re-points the incoming arrow (`connectFrom`), and only steps this one cannot already reach
+  are offered, since an arrow back would be a cycle. A published *process* is offered only for
+  a step that can take one (`for_each`) and is wired by writing `process_id`, leaving the
+  incoming arrow alone.
 - Undo/redo covers canvas *structure* only (drop / connect / delete / drag), by design.
 - Validation badges come from client-side required-field checks plus `/validate`'s
   `detailed[].step_id`: step-level issues badge the node, process-level ones surface in a
@@ -82,5 +105,28 @@ keeps light and dark in sync and makes a rebrand one edit.
   missing anchor degrades to a centred card rather than breaking the walk. The editor registers
   `useLeaveGuard(dirty)` so a tour started mid-edit asks before navigating away.
 - Moving the interface means updating `docs/guided-tour.html` too — the two are counterparts.
+
+## Browser tests (`designer/tests/`)
+
+A Playwright spec is a real user at the keyboard: sign in on `/login`, click steps out of the
+palette, fill the generated forms, save through the app, press Run, read the timeline. It
+never calls `/api/...` from inside the page. The API token is read in Node by `authToken()`
+(env, then `.env`, then `.process_engine_auth`) — never hard-coded, never fetched by the page.
+
+Three gates are **mandatory**, and a green report without them is not a pass. Use the helpers
+in `tests/support/designer.js`:
+
+- `expectRunPassed(page, steps)` — no failed step and **no skipped step**. A skipped step still
+  reports a successful run, so checking only the run badge passes while half the process never
+  ran: the gate is `Steps · n/n` with Succeeded as the only status badge.
+- `expectNoDisconnectedStep(page)` — before every save and after the run. Assert per step id
+  with a retrying `toHaveCount`, never one `evaluateAll` snapshot: the canvas re-renders as the
+  editor works and a snapshot between two renders reports a graph that was never on screen.
+- The 60-second per-test ceiling in `playwright.config.js`. A slow UI spec is a bug report
+  (an engine not claiming, a wait that is really a hang) — let it fail; never `test.setTimeout`.
+
+Tidy the canvas (Ctrl+Shift+L) before opening a step — palette drops overlap. Address a
+control by role (`getByRole('textbox', { name: 'Query' })`): the **ƒx** button's `aria-label`
+contains the field title, so `getByLabel('<Title>')` matches two elements.
 
 Verify with `cd designer; npm run build` before claiming a frontend change works.

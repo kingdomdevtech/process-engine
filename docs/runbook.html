@@ -319,8 +319,15 @@ hour and schedules keep firing.</p>
       need concurrency. There is no flag to set — polling the queue is all it does.</li>
 </ol>
 
-<p><code>deploy/windows-worker.env.example</code> is the annotated variable list, and includes the
-PowerShell snippet for loading it (PowerShell does not read <code>.env</code> files).</p>
+<p><code>.env.example</code> in the repository is the annotated list of every variable, both halves
+of the deployment included. PowerShell does not read <code>.env</code> files, so set these in the
+service definition — or, for an interactive session, load the file first:</p>
+
+<pre><code>Get-Content .env | Where-Object { $_ -match '^\s*[^#\s]' } | ForEach-Object {
+  $name, $value = $_ -split '=', 2
+  Set-Item -Path "env:$($name.Trim())" -Value $value.Trim()
+}
+python -m process_engine</code></pre>
 
 <h3>Running the engine as a Windows service</h3>
 <p>Any service supervisor works — NSSM, <code>sc.exe</code> wrapping a launcher, or a Scheduled
@@ -721,8 +728,8 @@ way down.</p>
       publishing, scheduling, reading runs.</li>
   <li><code>{your origin}/docs</code> — the live OpenAPI reference, for scripting anything the
       interface can do.</li>
-  <li><code>deploy/linux-api.env.example</code> and <code>deploy/windows-worker.env.example</code>
-      in the repository — annotated variable lists for the two halves of a split deployment.</li>
+  <li><code>.env.example</code> and <code>deploy/linux-api.env.example</code> in the repository —
+      annotated variable lists: the whole set, and the container's half of it.</li>
 </ul>
 
 <footer>

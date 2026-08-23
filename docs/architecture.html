@@ -323,11 +323,10 @@ one: it decides which machines have to install it.</p>
       <text class="s" x="738" y="222">depends on</text>
     </svg>
   </div>
-  <figcaption><b>The invariant is enforced by packaging, not by review.</b> The old rule was
-  "<code>process_engine</code> must never import <code>designer_api</code>", checked with a grep.
-  Now the API's distribution simply does not contain an engine or a single plugin implementation,
-  so the container cannot execute a step even by accident — and the same wheel is what makes
-  "no web stack on the engine host" true rather than aspirational.</figcaption>
+  <figcaption><b>The invariant is enforced by packaging, not by review.</b> The API's
+  distribution does not contain an engine or a single plugin implementation, so the container
+  cannot execute a step even by accident — and the same wheel is what makes "no web stack on
+  the engine host" true rather than aspirational.</figcaption>
 </figure>
 
 <table>

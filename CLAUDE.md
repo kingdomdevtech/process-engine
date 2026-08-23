@@ -41,6 +41,43 @@ Playwright/browser tests are a real user flow, not a backend smoke test. They mu
 state. No test may call `fetch('/api/...')` or any backend endpoint directly from the browser
 script — that bypasses the user path, hides the real validation errors, and makes the test lie.
 
+```powershell
+cd designer; npm install; npx playwright install chromium   # once
+cd designer; npx playwright test                            # needs API :8000, an engine, and vite :5173
+cd designer; npx playwright test mysql-for-each.spec.js --reporter=line
+```
+
+**Three things are mandatory in every UI spec, and a green Playwright report without them is
+not a pass.** The helpers that assert them live in `designer/tests/support/designer.js`; use
+those rather than rolling the assertion again:
+
+- **No failed step and no skipped step** — `expectRunPassed(page, steps)`. "Skipped" is the
+  quiet one: a step whose upstream delivered nothing is skipped rather than failed and the run
+  still reports success, so a spec that only checks the run badge passes while half the process
+  never happened. The gate is the timeline reading `Steps · n/n` with Succeeded as the only
+  status badge in it — pending or running means the poll gave up early.
+- **No disconnected step** — `expectNoDisconnectedStep(page)`, before every save and after the
+  run. Every step is reached by the trigger box or another step; one that nothing points at
+  never runs, and a canvas showing one is a process that silently does less than it looks like
+  it does. Assert it per step id with a retrying `toHaveCount`, never from one `evaluateAll`
+  snapshot of the whole graph: the canvas re-renders as the editor works and a snapshot read
+  between two renders reports a graph that was never on screen.
+- **Under a minute** — `timeout: 60_000` in `playwright.config.js`, and `RUN_TIMEOUT` of 30 s
+  for a queued run. Building a process, publishing it, queueing a run and reading the timeline
+  is seconds of work on a healthy stack, so a spec that needs longer is reporting a problem —
+  an engine that is not claiming, a step that is retrying, a wait that is really a hang. Let it
+  fail and say so rather than sitting there; do not raise the ceiling with `test.setTimeout`.
+
+Credentials are read in Node, never fetched by the page: `authToken()` looks at
+`PROCESS_ENGINE_AUTH_TOKEN`, then `.env`, then `.process_engine_auth`. Never hard-code one.
+
+Two more rules that come out of what these specs actually catch. Tidy the canvas
+(Ctrl+Shift+L) before opening any step — the palette drops steps around the middle of the view
+where the cards overlap, so clicking one of a stack is ambiguous for a person and for the test
+alike. And address a form control by role (`getByRole('textbox', { name: 'Query' })`), not by
+label text: the **ƒx** button beside every field carries `aria-label="Insert a value from an
+earlier step into <Title>"`, so `getByLabel('<Title>')` matches two elements.
+
 ## Three distributions, and what each host installs
 
 The product is three Python packages under `packages/`, plus the npm app in `designer/`.
@@ -56,10 +93,9 @@ decides which machines have to install it. `docs/architecture.html` draws all of
 Both tiers depend on core; **neither depends on the other**, and the API's distribution
 contains no engine and no plugin implementation at all. So "the container cannot execute a
 step" is a property of the install rather than a promise — there is no `execute()` in the
-wheel to call. The old grep-enforced rule ("`process_engine` must never import
-`designer_api`") is now enforced by packaging: a `fastapi`/`uvicorn` import inside
-`process_engine` would be a design break, and `process_engine_api` importing `process_engine`
-would be a worse one.
+wheel to call. Packaging enforces the separation, not review: a `fastapi`/`uvicorn` import
+inside `process_engine` would be a design break, and `process_engine_api` importing
+`process_engine` would be a worse one.
 
 Ask **"which hosts have to install this?"** before adding a module. If the answer is "both",
 it belongs in core — that is why `urls.py`, `notifications.py` and `workspace.py` live there
@@ -122,7 +158,14 @@ Three strictly separated layers; keep them that way:
    it with pydantic `Field(examples=[...])` rather than by special-casing a plugin in the
    designer. Selecting a step gives Input/Config/Output
    tabs (`StepInput` → `/steps/{id}/input`, `StepPanel`, `StepOutput` → `/steps/{id}/preview`);
-   the **ƒx** button opens the picker fed by `/steps/{id}/picker`. `StepOutput` handles both
+   the **ƒx** button opens the picker fed by `/steps/{id}/picker`. "Where does this step's work
+   come from?" is a question about the graph, so `StepInput`'s source select **edits** the
+   graph rather than shadowing it: picking a step (or the trigger box) re-points the incoming
+   arrow through `connectFrom`, and only steps this one cannot already reach are offered, since
+   an arrow back would be a cycle the save rejects. A published *process* is offered too, but
+   only for a step that can take one (`for_each`) — that is not an arrow on this canvas, so it
+   is wired by writing the step's own `process_id` and leaving the incoming arrow, which still
+   delivers the list, alone. `StepOutput` handles both
    preview shapes — a finished answer, or a `202` it then polls (`/previews/{id}`) while
    telling the user whether anything is listening; `Editor`'s `runDraft` does the same for a
    run that comes back non-terminal, so nothing in the designer knows which host executed.
@@ -139,7 +182,23 @@ Three strictly separated layers; keep them that way:
    `StepNode.jsx` reads it to move its handles between the sides and the top/bottom — moving
    a handle needs `useUpdateNodeInternals` or the edges keep their old anchors. Flipping the
    direction re-runs the layout, since the old positions would leave every edge doubling
-   back. A page contributes its own Ctrl+K entries through `useRegisterCommands`
+   back. **The graph the editor holds is not the graph it draws.** A step with nothing
+   upstream _is_ the step the engine hands the trigger payload to, so the arrow from the
+   trigger box is derived from that fact (`rootIds` → `canvasEdges`) rather than stored:
+   it survives a save and reload (connections to the trigger box are not part of a
+   definition), it moves to whatever step a deletion left at the front, and it cannot be
+   dragged away to leave a step looking connected to nothing. Two consequences that are
+   easy to undo by accident. The trigger node is not in `nodes` either — it is derived too,
+   so its React Flow changes have nowhere to be applied — but its **measurement has to be
+   kept** (`triggerSize`): React Flow re-reads a node's handle positions from the DOM only
+   while the node object carries `measured`, treats them as unknown otherwise, and simply
+   does not draw an edge whose source handle has no position, so the trigger arrow
+   disappeared on every keystroke in a config field until that was fixed. And `renderedNodes`
+   re-applies `selected` after decorating a node, because `decoratedNodes` is rebuilt from
+   `nodes`, which does not carry it — hand React Flow the decorated copy wholesale and it
+   reports an empty selection straight back through `onSelectionChange`, which used to leave
+   a newly added step's config form unopened. `selectedId` is the one authority on what is
+   selected. A page contributes its own Ctrl+K entries through `useRegisterCommands`
    (`commands.js`); the palette lives above the router and knows nothing about the editor.
 3. **Engine** (`engine.py`) — executes a definition, returns a `ProcessInstance`. Never
    touches storage or HTTP; `worker.py` composes engine + `storage.py` + registry, and that
@@ -193,6 +252,14 @@ validated against `ui.WIDGETS` at import — a typo raises there, not silently i
 naming a field that no longer exists, wording for an option that was renamed, a list widget
 on a dict, or a required field hidden by default.
 
+`detect="array"` (validated against `ui.DETECTORS`, same as `widget`) says "this field names
+a list that the step above almost certainly already produces". The designer fills it in from
+the connected upstream step the first time the form opens and offers a _Detect from the
+previous step_ button to do it again after the arrow moves — see `for_each`'s `items`. It is a
+hint about where a value comes from, not a default the plugin may rely on: the field is still
+an expression a person can overwrite, and the engine resolves it knowing nothing about any of
+this.
+
 Prefer writing a field so it needs no explanation: one `encryption` dropdown beats
 `use_tls` + `use_ssl`, and `action: statement | procedure` beats "leave `statement` empty to
 mean the procedure". Reshaping a field is as breaking as renaming a plugin key, so pair it
@@ -218,10 +285,10 @@ every engine (so it can run):
   `examples/hello-plugin`) — for a plugin another team owns on its own release cycle; it has
   to be installed on every host that executes, so prefer a built-in.
 
-There is deliberately **no drop-in folder**. Loose `.py` files under `./plugins` were removed:
-a step runs on whichever host claims it, so it must not depend on a file somebody dropped on
-one of them, and neither registry factory takes a path argument, so the API and the engines
-cannot disagree about what exists.
+There is deliberately **no drop-in folder** for loose `.py` files: a step runs on whichever
+host claims it, so it must not depend on a file somebody dropped on one of them, and neither
+registry factory takes a path argument, so the API and the engines cannot disagree about what
+exists.
 
 ### Filesystem sandbox (`workspace.py`)
 
@@ -317,8 +384,7 @@ drive-by fix.
 **There is one execution mode, and it is not a mode.** The API writes every job to the
 `job_queue` table and engines claim it — there is no switch, no inline path and no worker
 pool on the API host, because that host holds no engine to run one with. Nothing executes
-until a `python -m process_engine` is up; the earlier `PROCESS_ENGINE_QUEUE` and
-`PROCESS_ENGINE_RUN_WORKERS` variables are gone, and nothing reads them.
+until a `python -m process_engine` is up, and no environment variable changes that.
 
 n8n's queue mode without the broker: a job carries a snapshot of the definition taken at
 enqueue time, and the shared database coordinates everything else. A fresh run is persisted
