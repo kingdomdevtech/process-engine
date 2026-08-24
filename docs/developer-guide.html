@@ -665,9 +665,9 @@ save records the old value.</p>
 
 <p><code>designer/tests/demo/</code> is where a spec goes that leaves a real published process
 behind for people to look at. <code>demo/mysql-for-each.spec.js</code> is the worked example and
-the one to read before writing another: it builds its own tables with a step, wires a Condition to
-two updating branches inside a <code>for_each</code> sub-process, and rebuilds itself from scratch
-on every run — a fixed name in the <code>demo</code> folder, cleared by
+the one to read before writing another: it builds its own table with a step, runs two lanes off one
+query, wires a Condition to two updating branches after a <code>for_each</code>, and rebuilds itself
+from scratch on every run — a fixed name in the <code>demo</code> folder, cleared by
 <code>removeDemoProcess</code>. That helper moves the old process out of the folder before deleting
 it, because the API refuses to delete one that is in <code>demo</code>, which makes the demo spec
 the test of that guard as well.</p>

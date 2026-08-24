@@ -91,10 +91,15 @@ value editor, which commits on **blur** so a number stays a number: `fill()` the
 ### `designer/tests/demo/` builds the demo processes
 
 A spec in there is a fixture as much as a test: it leaves a real, published process behind in
-the `demo` folder for someone to open, so it uses a **fixed name** and deletes and rebuilds the
-pair on every run (`removeDemoProcess`). `mysql-for-each.spec.js` is the worked example — a
-MySQL query fanned out one sub-process per row, and inside that sub-process two lanes off the
-trigger box running at once, one of them a Condition whose branches write different rows.
+the `demo` folder for someone to open, so it uses a **fixed name** and deletes and rebuilds it
+on every run (`removeDemoProcess`). `mysql-for-each.spec.js` is the worked example — a schedule
+on the trigger box, a step that creates and seeds a table, a MySQL query, then two lanes off it
+running at once: a Log step counting the rows, and a `for_each` handing them on to a Condition
+whose two branches update the order the rows named. It is **one** process, which is what fixes
+`for_each` to its `next_step` mode: the other mode runs a published sub-process per item and is
+the only way a Condition is reached once per row, so the Condition here runs once, over the
+batch. A spec that changes the demo's shape has to keep that trade-off stated in its docstring,
+because the graph on screen does not show it.
 
 Two things follow from the UI-only rule. The demo **creates and seeds its own tables as steps**,
 because a spec may not reach past the UI to set one up — which makes for a better demo anyway.

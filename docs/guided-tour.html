@@ -624,8 +624,21 @@ visible in the second of those — an expression that resolved to something you 
 <h2 id="loops">12. Loops: doing it once per row</h2>
 
 <p>There are no loop arrows. A process is a directed <em>acyclic</em> graph, and the validator
-rejects a cycle. Repetition is a step instead: <strong>For Each</strong> runs a whole published
-process once per item of a list.</p>
+rejects a cycle. Repetition is a step instead: <strong>For Each</strong>, which works through a
+list one of two ways.</p>
+
+<ul>
+  <li><strong>Run a published process once per item</strong> — what the rest of this chapter is
+      about, and the only way the steps that do the work run once <em>per row</em>.</li>
+  <li><strong>Hand every item to the next step</strong> — everything stays in one process. For
+      Each passes the whole collection on, so the steps after it run <strong>once</strong>, over
+      the batch: reach into it with
+      <code>{{ steps.for_each.output.items.0.id }}</code>, or write one statement that covers the
+      lot.</li>
+</ul>
+
+<p>Pick the first when each item needs its own run — its own branch, its own failure, its own
+retry. Pick the second when it does not, and save yourself a second process.</p>
 
 <ol class="do">
   <li><strong>Build the per-item process first.</strong> Make a second process that handles
@@ -652,13 +665,13 @@ opinion.</p>
 </div>
 
 <p><b>There is a worked example on your own install.</b> If someone has run the browser tests
-against it, the <code>demo</code> folder holds <em>Demo MySQL orders fan-out</em> and the
-per-order process it runs, <em>Demo review one order</em>: a query reads a table of orders, For
-Each hands each row to the sub-process, and inside it a Condition sends the row to one of two
-update steps depending on its amount — beside a log step that runs at the same time, because two
-steps with nothing between them are not waiting for each other. It builds its own tables, so it is
-safe to run and to take apart. Those processes cannot be deleted while they are in that folder
-(see <a href="#faster">chapter 14</a>).</p>
+against it, the <code>demo</code> folder holds <em>Demo MySQL order review</em>: a schedule on the
+trigger box, a step that creates and seeds a table of orders, a query that reads them, and then two
+lanes at once — a log step counting the rows, and a For Each in <em>hand every item to the next
+step</em> mode feeding a Condition that sends the batch to one of two update steps depending on the
+first order's amount. Two steps with nothing between them are not waiting for each other, which is
+what the two lanes show. It builds its own table, so it is safe to run and to take apart. It cannot
+be deleted while it is in that folder (see <a href="#faster">chapter 14</a>).</p>
 
 <p class="chapter">Chapter 13</p>
 <h2 id="secrets">13. Secrets and the file sandbox</h2>

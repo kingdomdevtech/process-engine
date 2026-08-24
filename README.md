@@ -144,8 +144,8 @@ npx playwright test                     # drives the designer; needs the API, an
 The browser tests are a real user at the keyboard — they sign in, build a process from
 the palette and read the run timeline, and never call the API from inside the page. The
 specs in `designer/tests/demo/` double as fixtures: each one leaves a real published
-process behind in the `demo` folder (`Demo MySQL orders fan-out` and the per-order
-process it fans out to), rebuilt from scratch every run, tables and all.
+process behind in the `demo` folder (`Demo MySQL order review`), rebuilt from scratch
+every run, tables and all.
 
 The app is a multi-page product, not a single canvas: a public **landing page** at `/`,
 sign-in at `/login`, then the workspace — **Dashboard** (`/app`), **Editor**

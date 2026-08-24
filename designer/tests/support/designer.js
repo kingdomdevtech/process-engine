@@ -150,6 +150,30 @@ export async function removeDemoProcess(page, name) {
   return true
 }
 
+/**
+ * Open a process from the dashboard by name, the way a person finds one again.
+ *
+ * Names, not ids, across a test boundary: a spec split into two `test()`s so
+ * each gets its own budget should look the process up the way the product
+ * offers it rather than handing an id from one test to the other.
+ *
+ * The row is addressed by its own actions menu, not by its text: the dashboard
+ * also lists recent runs, and those rows carry the process name too.
+ */
+export async function openProcess(page, name) {
+  await page.goto('/app')
+  await page.getByLabel('Search processes and folders').fill(name)
+  // List, not Grid — see `removeDemoProcess` for why the grid card hides its menu
+  await page.getByRole('button', { name: 'List', exact: true }).click()
+  const row = page
+    .locator('table tbody tr')
+    .filter({ has: page.getByRole('button', { name: `Actions for ${name}` }) })
+  await expect(row, `“${name}” should be on the dashboard`).toHaveCount(1)
+  // anywhere but the last cell, which stops the click to keep the menu usable
+  await row.getByText(name, { exact: true }).click()
+  await expect(page.getByLabel('Process name')).toHaveValue(name)
+}
+
 // ---- the canvas ---------------------------------------------------------------
 
 /** Every step on the canvas, in the order React Flow drew them. */

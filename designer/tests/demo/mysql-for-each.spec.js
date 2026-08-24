@@ -1,51 +1,59 @@
 /**
- * The MySQL fan-out demo: build it, publish it, run it, read the answer.
+ * The MySQL order-review demo: build it, publish it, run it, read the answer.
  *
  * Everything in `tests/demo/` builds a **demo process** — a real, published
  * process left behind in the `demo` folder for someone to open and look at. So
- * this spec is a fixture as much as a test: it deletes both processes and builds
- * them again from scratch every run, which is why their names are fixed rather
- * than stamped, and why the delete has to go through the folder guard (a process
- * in `demo` cannot be deleted until it is moved out — see `removeDemoProcess`).
+ * this spec is a fixture as much as a test: it deletes the process and builds it
+ * again from scratch every run, which is why the name is fixed rather than
+ * stamped, and why the delete has to go through the folder guard (a process in
+ * `demo` cannot be deleted until it is moved out — see `removeDemoProcess`).
  *
- * What it builds:
+ * What it builds — one process, eight steps:
  *
- *   Demo review one order (the sub-process, one order at a time)
- *     trigger ─┬─▶ log row                      two lanes, run at the same time
- *              └─▶ check amount ─true──▶ approve   UPDATE … 'approved'
- *                                └─false─▶ reject   UPDATE … 'on hold'
+ *   trigger (schedule) ─▶ create table ─▶ seed orders ─▶ orders
+ *                                                          ├─▶ count orders
+ *                                                          └─▶ for each order
+ *                                                                 └─▶ check amount
+ *                                                                      ├─true──▶ approve
+ *                                                                      └─false─▶ reject
  *
- *   Demo MySQL orders fan-out (the parent)
- *     create table ▶ seed orders ▶ orders ▶ for each order ▶ review ▶ summary
+ * **Why one process and not two.** The engine has no loop edges, so `for_each`
+ * is the only repetition there is, and it repeats in one of two ways: running a
+ * published sub-process once per item, or — as here — handing the whole
+ * collection to the next step in this graph. Taking the second is what keeps
+ * this to a single process, and the honest consequence is that the Condition
+ * after it runs **once**, over the batch rather than per row: it reads the first
+ * order out of the collection and the branch it picks updates *that* order, by
+ * id, with a bound parameter. A Condition that runs once for every row is the
+ * sub-process form, and nothing in a single process can stand in for it.
  *
  * Everything happens the way a person would do it: sign in on `/login`, click
  * steps out of the palette, fill the generated forms, wire the graph from the
- * Input tab, tidy the canvas, save, press Run draft, and read the run timeline.
- * No `/api/...` call is made from inside the page — see the "Browser tests must
- * go through the designer UI" section of CLAUDE.md. In particular the demo
- * creates and seeds its own tables *as steps*, because a spec may not reach past
- * the UI to set one up.
+ * Input tab, tidy the canvas, save, publish, press Run draft, and read the run
+ * timeline. No `/api/...` call is made from inside the page — see the "Browser
+ * tests must go through the designer UI" section of CLAUDE.md. In particular the
+ * demo creates and seeds its own table *as steps*, because a spec may not reach
+ * past the UI to set one up.
  *
  * It covers:
  *
- *  1. rows out of `mysql_query`, one sub-process per row through `for_each`, and
- *     a value off each row written by a Log step;
- *  2. schedule and webhook triggers configured in the trigger box and nowhere
- *     else — not in the palette, not on a step;
- *  3. the first step connecting itself to the trigger box;
- *  4. every step after it connecting itself to the one before — on a real port,
+ *  1. a schedule configured in the trigger box and nowhere else — not in the
+ *     palette, not on a step;
+ *  2. the first step connecting itself to the trigger box;
+ *  3. every step after it connecting itself to the one before — on a real port,
  *     which for a Condition is its first branch and never a `main` it has not
  *     got;
- *  5. the Input tab offering an existing step, each branch of a branching step,
- *     and an existing process — and re-pointing the arrow when one is chosen;
- *  6. For Each detecting the list from the step above it, and refreshing that
- *     field on demand;
+ *  4. the Input tab offering an earlier step and each branch of a branching
+ *     step, and re-pointing the arrow when one is chosen;
+ *  5. two lanes off one query step, running at the same time;
+ *  6. For Each handing every item to the next step in this process, with the
+ *     list detected from the step feeding it and refreshed on demand;
  *  7. Tidy up steps laying the graph out clear of the trigger box;
- *  8. two steps hanging off the trigger box running at the same time, one of
- *     them a Condition whose two branches write different rows;
- *  9. arrows that leave whichever side of a card faces the step they point at,
+ *  8. arrows that leave whichever side of a card faces the step they point at,
  *     so one canvas can be wired left-to-right and top-to-bottom at once;
- * 10. a process in the `demo` folder refusing to be deleted until it is moved.
+ *  9. a process in the `demo` folder refusing to be deleted until it is moved;
+ * 10. the run: the query's rows worked through, the count logged in the other
+ *     lane, and one branch writing the order the rows named.
  *
  * The canvas is tidied before any step is opened, because the palette drops its
  * steps around the middle of the view where the cards overlap — clicking one of
@@ -70,6 +78,7 @@ import {
   expectNotConnected,
   expectRunPassed,
   nodePosition,
+  openProcess,
   publish,
   removeDemoProcess,
   runDetail,
@@ -82,20 +91,25 @@ import {
 /* No timeout override: the 60s ceiling in playwright.config.js applies to each
    test here. Building a process, publishing it, queueing a run and reading the
    timeline is seconds of real work, so needing longer means something is wrong
-   rather than slow. The two halves are separate tests so each gets its own
+   rather than slow. Building and running are separate tests so each gets its own
    budget — not because they are independent, which is what `serial` says. */
 test.use({ viewport: { width: 1680, height: 1000 } })
 
 const DB_URL = 'mysql+pymysql://process_engine:process_engine@127.0.0.1:3306/process_engine'
-/* Fixed names, not stamped ones: a demo is meant to be found again, and every
-   run of this spec deletes the pair and builds them from scratch. */
-const CHILD = 'Demo review one order'
-const PARENT = 'Demo MySQL orders fan-out'
+
+/* A fixed name, not a stamped one: a demo is meant to be found again, and every
+   run of this spec deletes it and builds it from scratch. */
+const DEMO = 'Demo MySQL order review'
+/* The two processes this spec used to build, back when the fan-out went through
+   a sub-process. Clearing them keeps the demo folder holding exactly what this
+   spec leaves behind; both lines can go once every install has run this. */
+const RETIRED = ['Demo MySQL orders fan-out', 'Demo review one order']
 
 /* The demo's own table, created and seeded by its own first two steps. `REPLACE`
    rather than `INSERT` so a second run re-arms the demo instead of piling up
-   rows: both orders go back to "new" and the branch decides them again. One
-   above the threshold, one below, so both branches always happen. */
+   rows: both orders go back to "new" and the branch decides them again. The
+   first order is above the threshold, so which branch runs is not a matter of
+   luck — the run either takes `approve` or the demo is broken. */
 const CREATE_TABLE = [
   'CREATE TABLE IF NOT EXISTS demo_orders (',
   '  id INT PRIMARY KEY,',
@@ -109,9 +123,14 @@ const SEED_ORDERS =
   "  (1, 'Acme Corp', 900.00, 'new'),\n" +
   "  (2, 'Globex', 120.00, 'new')"
 const READ_ORDERS = 'SELECT id, customer, amount, status FROM demo_orders ORDER BY id'
-const READ_STATUSES = 'SELECT id, status FROM demo_orders ORDER BY id'
 const APPROVE = "UPDATE demo_orders SET status = 'approved' WHERE id = :id"
 const REJECT = "UPDATE demo_orders SET status = 'on hold' WHERE id = :id"
+
+/* The order the branch is decided by, and the order both branches write — the
+   same row of the collection For Each is working through, so the demo cannot be
+   read as deciding one thing and updating another. */
+const FIRST_AMOUNT = '{{ steps.for_each_order.output.items.0.amount }}'
+const FIRST_ID = '{{ steps.for_each_order.output.items.0.id }}'
 
 /** Fill in a MySQL step's connection, and one bound value if it takes one. */
 async function configureMySQL(inspector, { field, sql, param }) {
@@ -155,64 +174,117 @@ async function skippedStep(page) {
   return name.trim()
 }
 
-test.describe.serial('the MySQL orders fan-out demo', () => {
-  test('a sub-process reviews one order in two parallel lanes, and writes the branch it took', async ({ page }) => {
+test.describe.serial('the MySQL order-review demo', () => {
+  test('one process: a schedule, a query, two lanes and a branch that writes', async ({ page }) => {
     await signIn(page)
 
-    await test.step('(10) last run’s demo processes are cleared out, guard and all', async () => {
-      // the parent points at the child, so it goes first
-      await removeDemoProcess(page, PARENT)
-      await removeDemoProcess(page, CHILD)
+    await test.step('(9) last run’s demo processes are cleared out, guard and all', async () => {
+      await removeDemoProcess(page, DEMO)
+      for (const name of RETIRED) await removeDemoProcess(page, name)
     })
 
     await page.goto('/app/processes/new')
     await page.getByLabel('Folder').fill(DEMO_FOLDER)
-    await page.getByLabel('Process name').fill(CHILD)
+    await page.getByLabel('Process name').fill(DEMO)
 
     const inspector = page.locator('[data-tour="inspector"]')
+    const palette = page.locator('[data-tour="step-palette"]')
     const source = inspector.getByRole('combobox', { name: 'Input source' })
 
-    // ---- lane one: say which order this is ------------------------------------
+    await test.step('(1) the schedule is set in the trigger box, and nowhere else', async () => {
+      await select(page, TRIGGER)
+      await inspector.getByRole('button', { name: /^Schedule$/ }).click()
+      await inspector.getByRole('button', { name: 'Every 15 min' }).click()
+      await expect(inspector.getByLabel('Cron expression')).toHaveValue('*/15 * * * *')
 
-    const logId = await addStep(page, 'log')
-    await test.step('(3) the first step wires itself to the trigger box', async () => {
-      await expectConnected(page, TRIGGER, logId)
+      // and nowhere else: no trigger step to drop on the canvas
+      for (const term of ['schedule', 'cron']) {
+        await palette.getByLabel('Search steps').fill(term)
+        await expect(palette.getByText(`No step matches “${term}”.`)).toBeVisible()
+      }
+      await palette.getByRole('button', { name: 'Clear search' }).click()
     })
-    await page.locator('#pe-step-name').fill('log row')
+
+    // ---- the demo makes its own data -------------------------------------------
+
+    const createId = await addStep(page, 'mysql_execute')
+    await test.step('(2) the first step wires itself to the trigger box', async () => {
+      await expectConnected(page, TRIGGER, createId)
+    })
+    await page.locator('#pe-step-name').fill('create table')
+    await configureMySQL(inspector, { field: 'Statement', sql: CREATE_TABLE })
+
+    await test.step('(1) a step has no trigger configuration of its own', async () => {
+      await expect(inspector.getByLabel('Cron expression')).toHaveCount(0)
+      await expect(inspector.getByRole('button', { name: /^Schedule$/ })).toHaveCount(0)
+    })
+
+    const seedId = await addStep(page, 'mysql_execute')
+    await expectConnected(page, createId, seedId)
+    await page.locator('#pe-step-name').fill('seed orders')
+    await configureMySQL(inspector, { field: 'Statement', sql: SEED_ORDERS })
+
+    const ordersId = await addStep(page, 'mysql_query')
+    await test.step('(3) and every step after joins the one before it', async () => {
+      await expectConnected(page, seedId, ordersId)
+    })
+    await page.locator('#pe-step-name').fill('orders')
+    // "Query" and not { exact: true }: a required field's label carries its *
+    await configureMySQL(inspector, { field: 'Query', sql: READ_ORDERS })
+
+    // ---- lane one: how many orders came back ------------------------------------
+
+    const countId = await addStep(page, 'log')
+    await expectConnected(page, ordersId, countId)
+    await page.locator('#pe-step-name').fill('count orders')
     await inspector
       .getByRole('textbox', { name: 'Message' })
-      .fill('order {{ trigger.item.id }} for {{ trigger.item.customer }}: {{ trigger.item.amount }}')
+      .fill('{{ steps.orders.output.count }} orders to review')
 
-    // ---- lane two: decide it, in parallel -------------------------------------
+    // ---- lane two: work through the rows, in parallel ---------------------------
 
-    const checkId = await addStep(page, 'condition')
-    await test.step('(4) a new step joins the end of the flow', async () => {
-      await expectConnected(page, logId, checkId)
-    })
-    await page.locator('#pe-step-name').fill('check amount')
+    const forEachId = await addStep(page, 'for_each')
+    await page.locator('#pe-step-name').fill('for each order')
 
-    await test.step('(5)(8) pointing it at the trigger box makes it a second lane', async () => {
+    await test.step('(4)(5) pointing it back at the query makes it a second lane', async () => {
+      await expectConnected(page, countId, forEachId)
       await inspector.getByRole('tab', { name: 'Input' }).click()
-      await expect(source).toHaveValue(`step:${logId}`)
-      await source.selectOption(TRIGGER)
-      await expectNotConnected(page, logId, checkId)
-      await expectConnected(page, TRIGGER, checkId)
+      await expect(source).toHaveValue(`step:${countId}`)
+      await expect(source.getByRole('option', { name: 'orders', exact: true })).toHaveCount(1)
+      await source.selectOption(`step:${ordersId}`)
+      await expectNotConnected(page, countId, forEachId)
+      await expectConnected(page, ordersId, forEachId)
       await inspector.getByRole('tab', { name: 'Config' }).click()
     })
 
+    await test.step('(6) For Each hands every item to the next step in this process', async () => {
+      /* The mode that keeps this to one process. The other one runs a published
+         sub-process per item, which is the only way a Condition can be reached
+         once per row — see the note at the top of this file. */
+      await expect(inspector.getByRole('combobox', { name: 'How to iterate' })).toHaveValue('next_step')
+      // so the sub-process picker belongs to the other mode and is not on the form
+      await expect(
+        inspector.getByRole('combobox', { name: 'Published process to run for each one' }),
+      ).toHaveCount(0)
+    })
+
+    // ---- the branch ---------------------------------------------------------------
+
+    const checkId = await addStep(page, 'condition')
+    await expectConnected(page, forEachId, checkId)
+    await page.locator('#pe-step-name').fill('check amount')
+
     const amount = inspector.getByRole('textbox', { name: 'Value to check' })
     const threshold = inspector.getByRole('textbox', { name: 'Compared with' })
-    await amount.fill('{{ trigger.item.amount }}')
+    await amount.fill(FIRST_AMOUNT)
     await amount.blur() // an untyped field commits on blur, so a number stays one
     await inspector.getByRole('combobox', { name: 'Test' }).selectOption('greater_than')
     await threshold.fill('500')
     await threshold.blur()
 
-    // ---- the two branches ------------------------------------------------------
-
     const approveId = await addStep(page, 'mysql_execute')
     await page.locator('#pe-step-name').fill('approve')
-    await test.step('(4) “and then” off a Condition is its first branch, not a main port', async () => {
+    await test.step('(3) “and then” off a Condition is its first branch, not a main port', async () => {
       await expectConnected(page, checkId, approveId)
       await inspector.getByRole('tab', { name: 'Input' }).click()
       await expect(source, 'the arrow should come off the true branch').toHaveValue(`step:${checkId}:true`)
@@ -221,12 +293,12 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
     await configureMySQL(inspector, {
       field: 'Statement',
       sql: APPROVE,
-      param: { name: 'id', value: '{{ trigger.item.id }}' },
+      param: { name: 'id', value: FIRST_ID },
     })
 
     const rejectId = await addStep(page, 'mysql_execute')
     await page.locator('#pe-step-name').fill('reject')
-    await test.step('(5) the other branch is a source the Input tab can name', async () => {
+    await test.step('(4) the other branch is a source the Input tab can name', async () => {
       await expectConnected(page, approveId, rejectId)
       await inspector.getByRole('tab', { name: 'Input' }).click()
       // a branching step is offered once per branch — "after the check" is not
@@ -243,22 +315,22 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
     await configureMySQL(inspector, {
       field: 'Statement',
       sql: REJECT,
-      param: { name: 'id', value: '{{ trigger.item.id }}' },
+      param: { name: 'id', value: FIRST_ID },
     })
 
-    await test.step('(8) both lanes start at the trigger box and neither waits for the other', async () => {
-      await expectConnected(page, TRIGGER, logId)
-      await expectConnected(page, TRIGGER, checkId)
-      await expectNotConnected(page, logId, checkId)
-      await expectNotConnected(page, checkId, logId)
+    await test.step('(5) both lanes come off the query and neither waits for the other', async () => {
+      await expectConnected(page, ordersId, countId)
+      await expectConnected(page, ordersId, forEachId)
+      await expectNotConnected(page, countId, forEachId)
+      await expectNotConnected(page, forEachId, countId)
     })
 
     await expectNoDisconnectedStep(page)
     await save(page)
 
-    // ---- (7)(9) the canvas ------------------------------------------------------
+    // ---- (7)(8) the canvas ---------------------------------------------------------
 
-    await test.step('(7) tidy up lays both lanes out clear of the trigger box', async () => {
+    await test.step('(7) tidy up lays the chain and both lanes out clear of the trigger box', async () => {
       // the shortcut is ignored while a form field has focus, so click away first
       await select(page, TRIGGER)
       await page.keyboard.press('Control+Shift+L')
@@ -266,25 +338,33 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
 
       const trigger = await nodePosition(page, TRIGGER)
       await expect
-        .poll(async () => (await stepPositions(page))[checkId].x, {
-          message: 'the lanes should start clear of the trigger box',
+        .poll(async () => (await stepPositions(page))[createId].x, {
+          message: 'the first step should sit clear of the trigger box',
         })
         .toBeGreaterThan(trigger.x)
 
       const at = await stepPositions(page)
-      expect(at[logId].x, 'the two lanes should start alongside each other').toBe(at[checkId].x)
-      expect(at[logId].y).not.toBe(at[checkId].y)
+      const chain = [createId, seedId, ordersId]
+      for (let index = 1; index < chain.length; index += 1) {
+        expect(at[chain[index]].x, 'each step should sit right of the one feeding it').toBeGreaterThan(
+          at[chain[index - 1]].x,
+        )
+        expect(at[chain[index]].y, 'one chain, one lane').toBe(at[chain[0]].y)
+      }
+      expect(at[countId].x, 'the two lanes should start alongside each other').toBe(at[forEachId].x)
+      expect(at[countId].y).not.toBe(at[forEachId].y)
+      expect(at[checkId].x, 'the branch follows the step feeding it').toBeGreaterThan(at[forEachId].x)
       expect(at[approveId].x, 'a branch sits right of the step feeding it').toBeGreaterThan(at[checkId].x)
       expect(at[rejectId].x).toBeGreaterThan(at[checkId].x)
     })
 
-    await test.step('(9) an arrow leaves whichever side of the card faces where it is going', async () => {
+    await test.step('(8) an arrow leaves whichever side of the card faces where it is going', async () => {
       /* `reject` is laid out level with the check and to its right, so that
          arrow leaves the right-hand border — as does the trigger's, for the same
          reason. Both are exact: the two cards share a centre line, so this says
          what the geometry chose and not what the card sizes happened to be. */
       await expectArrowLeaves(page, checkId, rejectId, 'right')
-      await expectArrowLeaves(page, TRIGGER, logId, 'right')
+      await expectArrowLeaves(page, TRIGGER, createId, 'right')
 
       /* Now move the other branch under the check by hand. Its arrow leaves the
          bottom while `reject`'s still leaves the right: two directions on one
@@ -298,7 +378,7 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
       await page.getByRole('button', { name: 'Canvas layout' }).click()
       await page.getByRole('menuitem', { name: 'Top to bottom' }).click()
       await expectArrowLeaves(page, checkId, rejectId, 'bottom')
-      await expectArrowLeaves(page, TRIGGER, logId, 'bottom')
+      await expectArrowLeaves(page, TRIGGER, createId, 'bottom')
 
       // left to right is how the demo is left, so put it back
       await page.getByRole('button', { name: 'Canvas layout' }).click()
@@ -306,120 +386,15 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
       await expectArrowLeaves(page, checkId, rejectId, 'right')
     })
 
-    await expectNoDisconnectedStep(page)
-    await save(page)
-    await expect(page.getByText(/This process cannot run yet/i)).toHaveCount(0)
-    // for_each runs a *published* process, so a draft would never be found
-    await publish(page)
-  })
+    // ---- (6) For Each works out which list it is working through ------------------
 
-  test('the parent reads the orders, fans them out one per row, and reads the result back', async ({ page }) => {
-    await signIn(page)
-
-    await page.goto('/app/processes/new')
-    await page.getByLabel('Folder').fill(DEMO_FOLDER)
-    await page.getByLabel('Process name').fill(PARENT)
-
-    const inspector = page.locator('[data-tour="inspector"]')
-    const palette = page.locator('[data-tour="step-palette"]')
-    const source = inspector.getByRole('combobox', { name: 'Input source' })
-
-    await test.step('(2) schedule and webhook are configured in the trigger box', async () => {
-      await select(page, TRIGGER)
-
-      await inspector.getByRole('button', { name: /^Schedule$/ }).click()
-      await inspector.getByRole('button', { name: 'Every 15 min' }).click()
-      await expect(inspector.getByLabel('Cron expression')).toHaveValue('*/15 * * * *')
-
-      await inspector.getByRole('button', { name: /^Webhook$/ }).click()
-      await inspector.getByLabel('Webhook path').fill('demo_orders')
-      await expect(inspector.getByText('POST /api/hooks/demo_orders')).toBeVisible()
-
-      // and nowhere else: no trigger step to drop on the canvas
-      for (const term of ['schedule', 'webhook', 'cron']) {
-        await palette.getByLabel('Search steps').fill(term)
-        await expect(palette.getByText(`No step matches “${term}”.`)).toBeVisible()
-      }
-      await palette.getByRole('button', { name: 'Clear search' }).click()
-    })
-
-    // ---- the demo makes its own data -------------------------------------------
-
-    const createId = await addStep(page, 'mysql_execute')
-    await test.step('(3) the first step wires itself to the trigger box', async () => {
-      await expectConnected(page, TRIGGER, createId)
-    })
-    await page.locator('#pe-step-name').fill('create table')
-    await configureMySQL(inspector, { field: 'Statement', sql: CREATE_TABLE })
-
-    await test.step('(2) a step has no trigger configuration of its own', async () => {
-      await expect(inspector.getByLabel('Cron expression')).toHaveCount(0)
-      await expect(inspector.getByLabel('Webhook path')).toHaveCount(0)
-      await expect(inspector.getByRole('button', { name: /^Schedule$/ })).toHaveCount(0)
-      await expect(inspector.getByRole('button', { name: /^Webhook$/ })).toHaveCount(0)
-    })
-
-    const seedId = await addStep(page, 'mysql_execute')
-    await expectConnected(page, createId, seedId)
-    await page.locator('#pe-step-name').fill('seed orders')
-    await configureMySQL(inspector, { field: 'Statement', sql: SEED_ORDERS })
-
-    const ordersId = await addStep(page, 'mysql_query')
-    await test.step('(4) and every step after joins the one before it', async () => {
-      await expectConnected(page, seedId, ordersId)
-    })
-    await page.locator('#pe-step-name').fill('orders')
-    // "Query" and not { exact: true }: a required field's label carries its *
-    await configureMySQL(inspector, { field: 'Query', sql: READ_ORDERS })
-
-    const forEachId = await addStep(page, 'for_each')
-    await expectConnected(page, ordersId, forEachId)
-    await page.locator('#pe-step-name').fill('for each order')
-
-    const reviewId = await addStep(page, 'mysql_query')
-    await expectConnected(page, forEachId, reviewId)
-    await page.locator('#pe-step-name').fill('review')
-    await configureMySQL(inspector, { field: 'Query', sql: READ_STATUSES })
-
-    const summaryId = await addStep(page, 'log')
-    await expectConnected(page, reviewId, summaryId)
-    await page.locator('#pe-step-name').fill('summary')
-
-    await expectNoDisconnectedStep(page)
-    await save(page)
-
-    // ---- (7) tidy up -------------------------------------------------------------
-
-    await test.step('(7) tidy up lays the chain out clear of the trigger box', async () => {
-      await select(page, TRIGGER)
-      await page.keyboard.press('Control+Shift+L')
-      await expect(page.getByText('Steps repositioned')).toBeVisible()
-
-      const trigger = await nodePosition(page, TRIGGER)
-      await expect
-        .poll(async () => (await stepPositions(page))[createId].x, {
-          message: 'the first step should sit clear of the trigger box',
-        })
-        .toBeGreaterThan(trigger.x)
-
-      const at = await stepPositions(page)
-      const chain = [createId, seedId, ordersId, forEachId, reviewId, summaryId]
-      for (let index = 1; index < chain.length; index += 1) {
-        expect(at[chain[index]].x, 'each step should sit right of the one feeding it').toBeGreaterThan(
-          at[chain[index - 1]].x,
-        )
-        expect(at[chain[index]].y, 'one chain, one lane').toBe(at[chain[0]].y)
-      }
-    })
-
-    // ---- (6) For Each works out which list it is iterating -----------------------
-
-    const items = inspector.getByRole('textbox', { name: 'List to work through' })
-
-    await test.step('(6) For Each detects the list from the step above it', async () => {
+    await test.step('(6) For Each detects the list from the step feeding it', async () => {
       await select(page, forEachId)
-      // it fills itself in the first time the form opens — the detection is the
-      // documented default, not something to press a button for
+      const items = inspector.getByRole('textbox', { name: 'List to work through' })
+      /* Detection reads the *saved* graph, which is why it is asserted after the
+         save above and not when the step was dropped: it fills itself in the
+         first time the form opens on a process that has an id — the detection is
+         the documented default, not something to press a button for. */
       await expect(items).toHaveValue(/^\{\{ steps\.orders\.output(\.rows)? \}\}$/)
 
       // and refreshes on demand once the connection above it changes
@@ -430,117 +405,49 @@ test.describe.serial('the MySQL orders fan-out demo', () => {
       await expect(items).toHaveValue(/^\{\{ steps\.orders\.output(\.rows)? \}\}$/)
     })
 
-    // ---- (5) the Input tab: another step, or another process ----------------------
-
-    await test.step('(5) the input source offers steps and processes', async () => {
-      await inspector.getByRole('tab', { name: 'Input' }).click()
-      await expect(source).toBeVisible()
-
-      // the step feeding it is what the panel shows, because that is the arrow
-      await expect(source).toHaveValue(`step:${ordersId}`)
-      await expect(source.getByRole('option', { name: 'Trigger data' })).toHaveCount(1)
-      await expect(source.getByRole('option', { name: 'orders', exact: true })).toHaveCount(1)
-      // a step downstream of this one is not offered: that arrow would be a cycle
-      await expect(source.getByRole('option', { name: 'summary', exact: true })).toHaveCount(0)
-      // and an existing process is
-      await expect(source.getByRole('option', { name: CHILD })).toHaveCount(1)
-      // but never this one — every item would start the process again
-      await expect(source.getByRole('option', { name: PARENT })).toHaveCount(0)
-    })
-
-    await test.step('(5) choosing a source re-connects the arrow', async () => {
-      await source.selectOption(TRIGGER)
-      await expectNotConnected(page, ordersId, forEachId)
-      await expectConnected(page, TRIGGER, forEachId)
-
-      await source.selectOption(`step:${ordersId}`)
-      await expectConnected(page, ordersId, forEachId)
-      await expectNotConnected(page, TRIGGER, forEachId)
-    })
-
-    await test.step('(5) choosing a process runs it once per item', async () => {
-      await source.selectOption({ label: CHILD })
-      // the arrow still delivers the list; the sub-process is what each item goes to
-      await expectConnected(page, ordersId, forEachId)
-
-      await inspector.getByRole('tab', { name: 'Config' }).click()
-      await expect(inspector.getByRole('combobox', { name: 'How to iterate' })).toHaveValue('process')
-      const chosen = inspector.getByRole('combobox', { name: 'Published process to run for each one' })
-      await expect(chosen.locator('option:checked')).toHaveText(CHILD)
-    })
-
-    // ---- (1) what came back, in the parent's own log ------------------------------
-
-    await test.step('the summary step reports what came back', async () => {
-      await select(page, summaryId)
-      await inspector
-        .getByRole('textbox', { name: 'Message' })
-        .fill(
-          'reviewed {{ steps.for_each_order.output.count }} orders; order 1 is now ' +
-            '{{ steps.review.output.rows.0.status }} and order 2 is {{ steps.review.output.rows.1.status }}',
-        )
-    })
-
-    // ---- run it -------------------------------------------------------------------
-
     await expectNoDisconnectedStep(page)
     await save(page)
     await expect(page.getByText(/This process cannot run yet/i)).toHaveCount(0)
+    // the schedule fires the published version, so a demo left as a draft never runs
+    await publish(page)
+  })
 
-    await test.step('the run finishes with nothing failed and nothing skipped', async () => {
-      await page.getByRole('button', { name: /^Run draft$/ }).click()
-      await expectRunPassed(page, 6)
+  test('the run logs the row count, works through the rows, and takes one branch', async ({ page }) => {
+    await signIn(page)
+    await openProcess(page, DEMO)
+
+    await test.step('(10) the run finishes with nothing failed and one branch skipped', async () => {
       await expectNoDisconnectedStep(page)
+      await page.getByRole('button', { name: /^Run draft$/ }).click()
+      /* Eight steps, seven of them run: the Condition sends its input down one
+         port, so the step on the other is skipped by design. That is the one
+         honest reason for a skip, which is why it is declared and counted rather
+         than tolerated — and named, since which branch was taken is the point. */
+      await expectRunPassed(page, 8, { skipped: 1 })
+      await expectNoDisconnectedStep(page)
+      expect(await skippedStep(page), 'the branch not taken should be the only skip').toBe('reject')
     })
 
-    await test.step('(1) For Each reports one sub-run per row', async () => {
+    await test.step('(5)(10) the other lane was handed the row count', async () => {
+      const { input } = await stepData(page, 'count orders')
+      // the two orders the query returned — the message logs this same count
+      await expect(input).toContainText(/count\s*2/)
+    })
+
+    await test.step('(6)(10) For Each worked through both rows', async () => {
       const { outputs } = await stepData(page, 'for each order')
-      // the two orders the query returned, both of them run to the end
       await expect(outputs).toContainText(/count\s*2/)
-      await expect(outputs).toContainText(/succeeded\s*2/)
-      await expect(outputs).toContainText(/failed\s*0/)
     })
 
-    await test.step('(8) the two branches wrote different rows, and the parent reads them back', async () => {
-      const { outputs } = await stepData(page, 'review')
-      // the rows themselves are three levels in, and the tree opens two
-      await expandJson(outputs)
-      // 900 was approved and 120 put on hold — the condition really branched, and
-      // each sub-process really updated the order it was handed
-      await expect(outputs).toContainText('approved')
-      await expect(outputs).toContainText('on hold')
-    })
-
-    await test.step('(1)(8) each sub-run logged its order and skipped the branch it did not take', async () => {
-      await page.goto('/app/runs')
-      await page.getByLabel('Search runs').fill(CHILD)
-
-      const rows = page.locator('table tbody tr')
-      await expect(rows, 'one sub-run per order').toHaveCount(2)
-      await expect(page.locator('table tbody .badge-succeeded')).toHaveCount(2)
-
-      const skipped = []
-      for (const index of [0, 1]) {
-        await rows.nth(index).click()
-        // the row is only marked once its detail is the one on screen
-        await expect(rows.nth(index)).toHaveClass(/is-selected/)
-        /* Four steps, three of them run: the Condition sends its input down one
-           port, so the steps on the other are skipped by design. That is the one
-           honest reason for a skip, which is why it is declared and counted
-           rather than tolerated. */
-        await expectRunPassed(page, 4, { skipped: 1 })
-        skipped.push(await skippedStep(page))
-      }
-      expect(skipped.slice().sort(), 'the two orders should have taken different branches').toEqual([
-        'approve',
-        'reject',
-      ])
-
-      await rows.first().click()
-      // the order this sub-run was handed, as the Log step saw it
-      const { input } = await stepData(page, 'log row')
-      await expect(input).toContainText(/customer\s*"(Acme Corp|Globex)"/)
-      await expect(input).toContainText(/index\s*[01]/)
+    await test.step('(10) the branch updated the order its own row named', async () => {
+      const { input, outputs } = await stepData(page, 'approve')
+      // one row matched, in a transaction that committed: the UPDATE really landed
+      await expect(outputs).toContainText(/rowcount\s*1/)
+      /* And it was handed the collection For Each was working through, which is
+         where its bound `:id` came from. The rows are three levels in and the
+         tree opens two. */
+      await expandJson(input)
+      await expect(input).toContainText('Acme Corp')
     })
   })
 })
