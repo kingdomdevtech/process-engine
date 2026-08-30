@@ -12,5 +12,6 @@ process_engine.db
 node_modules/
 designer/dist/
 .DS_Store
-workdir/
+!workdir/demo-orders.xlsx
 test-results/
+.cache/

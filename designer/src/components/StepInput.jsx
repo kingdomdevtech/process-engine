@@ -7,6 +7,27 @@ import JsonTree from './JsonTree.jsx'
 const TRIGGER = '__trigger__'
 
 /**
+ * How the select encodes a step source: `step:<id>` on a plain main port, and
+ * `step:<id>:<port>` on a named one. Ids never contain a colon, so the first one
+ * separates the two.
+ */
+function parseStep(value) {
+  if (!value.startsWith('step:')) return null
+  const rest = value.slice('step:'.length)
+  const cut = rest.indexOf(':')
+  return cut === -1
+    ? { id: rest, port: 'main' }
+    : { id: rest.slice(0, cut), port: rest.slice(cut + 1) }
+}
+
+/** One option per way into a step: its main port, or each branch it emits on. */
+function sourceOptions(step) {
+  const ports = step.ports?.length ? step.ports : ['main']
+  if (ports.length === 1 && ports[0] === 'main') return [{ value: `step:${step.id}`, label: step.label }]
+  return ports.map((port) => ({ value: `step:${step.id}:${port}`, label: `${step.label} (${port})` }))
+}
+
+/**
  * The step input panel: where this step's work comes from, and what arrived
  * from there last time.
  *
@@ -17,7 +38,10 @@ const TRIGGER = '__trigger__'
  *   picking one re-points this step's incoming arrow at it, so the canvas and
  *   this panel can never disagree about what feeds this step. Only steps that
  *   cannot already be reached *from* here are offered: the graph is a DAG, and
- *   an arrow back would be a cycle the save would reject.
+ *   an arrow back would be a cycle the save would reject. A step that branches
+ *   is offered once per branch, because "after the check" is not an answer the
+ *   graph can hold — a Condition emits on `true` or `false` and the arrow has to
+ *   say which.
  * - **a published process**, offered only for a step that can actually take one
  *   (`for_each` runs one per item). That is not an arrow on this canvas, so it
  *   is wired by writing the step's own process field instead — the incoming
@@ -41,9 +65,8 @@ export default function StepInput({
 }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
-  const [choice, setChoice] = useState(
-    processField && processValue ? `process:${processValue}` : connectedTo === TRIGGER ? TRIGGER : `step:${connectedTo}`,
-  )
+  // `connectedTo` arrives already in the select's own vocabulary — see parseStep
+  const [choice, setChoice] = useState(processField && processValue ? `process:${processValue}` : connectedTo)
   const [target, setTarget] = useState(fields[0] ?? '')
 
   const load = useCallback(() => {
@@ -82,10 +105,7 @@ export default function StepInput({
      except while a process is selected, which is a view of something the graph
      does not draw. */
   useEffect(() => {
-    setChoice((current) => {
-      if (current.startsWith('process:')) return current
-      return connectedTo === TRIGGER ? TRIGGER : `step:${connectedTo}`
-    })
+    setChoice((current) => (current.startsWith('process:') ? current : connectedTo))
   }, [connectedTo])
 
   if (!data && !error) {
@@ -100,8 +120,11 @@ export default function StepInput({
   const pickedProcess = choice.startsWith('process:')
     ? processes.find((process) => process.id === choice.slice('process:'.length))
     : null
-  const pickedStepId = choice.startsWith('step:') ? choice.slice('step:'.length) : null
-  const selected = pickedStepId ? sources.find((entry) => entry.step_id === pickedStepId) : null
+  const picked = parseStep(choice)
+  const pickedStepId = picked?.id ?? null
+  const selected = picked
+    ? sources.find((entry) => entry.step_id === picked.id && entry.source_port === picked.port)
+    : null
   const pickedStep = pickedStepId ? steps.find((step) => step.id === pickedStepId) : null
 
   let shown
@@ -127,8 +150,9 @@ export default function StepInput({
 
   const change = (value) => {
     setChoice(value)
+    const step = parseStep(value)
     if (value.startsWith('process:')) onPickProcess?.(value.slice('process:'.length))
-    else if (value.startsWith('step:')) onConnect?.(value.slice('step:'.length))
+    else if (step) onConnect?.(step.id, step.port)
     else onConnect?.(TRIGGER)
   }
 
@@ -173,9 +197,9 @@ export default function StepInput({
         </optgroup>
         {steps.length > 0 && (
           <optgroup label="Steps">
-            {steps.map((step) => (
-              <option key={step.id} value={`step:${step.id}`}>
-                {step.label}
+            {steps.flatMap(sourceOptions).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </optgroup>

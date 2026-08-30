@@ -8,8 +8,10 @@ export default function TriggerNode({ id, data }) {
   const updateNodeInternals = useUpdateNodeInternals()
   const { isVertical } = useOrientation()
 
-  /* Moving a handle between the sides and the top/bottom needs this, or the
-     edges keep their old anchors and leave the box from where it used to be. */
+  /* Where the arrow leaves this box is worked out per edge from the geometry
+     (FloatingEdge.jsx); this handle is where a connection is dragged from. It
+     still has to be announced when it moves, because React Flow will not draw
+     an edge whose handle has no known position. */
   useEffect(() => {
     updateNodeInternals(id)
   }, [id, isVertical, updateNodeInternals])

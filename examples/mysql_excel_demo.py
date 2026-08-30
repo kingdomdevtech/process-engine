@@ -5,9 +5,9 @@
     python examples\\mysql_excel_demo.py --run     # ...and run the parent once, engine-only
     python examples\\mysql_excel_demo.py --make-workbook --run
                                                    # ...also create the workbook first: a live
-                                                   # ODBC connection to demo_orders if a MySQL
-                                                   # ODBC driver is installed, else a placeholder
-                                                   # Power Query (Windows + Excel + pywin32)
+                                                   # Power Query backed by MySQL ODBC against
+                                                   # demo_orders when a driver is installed, else
+                                                   # a placeholder Power Query (Windows + Excel + pywin32)
 
 Re-running this script is also the reset switch: each demo process is matched
 by name and its draft overwritten with the original definition, then published
@@ -312,13 +312,11 @@ def _mysql_odbc_driver() -> str | None:
 def make_workbook(workbook_path: str, mysql_url: str) -> str:
     """Create the demo workbook; returns a description of what was built.
 
-    With a MySQL ODBC driver installed, the workbook gets a live ODBC data
-    connection against demo_orders. That classic connection type embeds the
-    credentials in the connection string (fine for the throwaway demo login),
-    which is what lets the engine refresh it completely unattended — a Power
-    Query mashup refuses embedded credentials and insists on one interactive
-    "Connect" per Windows user before headless refreshes work, so a real Power
-    Query workbook needs that one-time grant done by hand first.
+    With a MySQL ODBC driver installed, the workbook gets a Power Query backed
+    by Odbc.Query against demo_orders. The workbook holds the driver and server
+    settings only. Power Query stores credentials per Windows user and insists
+    on one interactive "Connect" before headless refreshes work, so the builder
+    leaves the first refresh to Excel.
 
     Without the driver, a placeholder Power Query (static table) is created so
     the refresh step still has a genuine connection to exercise. Same
@@ -347,20 +345,31 @@ def make_workbook(workbook_path: str, mysql_url: str) -> str:
         sheet.Name = "Orders"
         if driver:
             connection_string = (
-                f"ODBC;DRIVER={{{driver}}};SERVER={url.host or '127.0.0.1'};"
-                f"PORT={url.port or 3306};DATABASE={url.database or ''};"
-                f"UID={url.username or ''};PWD={url.password or ''};"
+                f"Driver={{{driver}}};Server={url.host or '127.0.0.1'};"
+                f"Port={url.port or 3306};Database={url.database or ''};"
             )
-            table = sheet.ListObjects.Add(0, connection_string, None, 1, sheet.Range("A1"))
+            workbook.Queries.Add(
+                "Orders",
+                'let\n'
+                f'    Source = Odbc.Query("{connection_string}", '
+                '"SELECT id, customer, total, status, CURRENT_TIMESTAMP AS refreshed_at '
+                'FROM demo_orders ORDER BY id")\n'
+                'in\n'
+                '    Source',
+            )
+            table = sheet.ListObjects.Add(
+                0,  # xlSrcExternal
+                'OLEDB;Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;'
+                'Location=Orders;Extended Properties=""',
+                None,
+                1,  # xlYes: first row is headers
+                sheet.Range("A1"),
+            )
             table.QueryTable.CommandType = 2  # xlCmdSql
-            table.QueryTable.CommandText = (
-                "SELECT id, customer, total, status FROM demo_orders ORDER BY id"
-            )
-            # Excel strips PWD= from the connection string on save unless this is
-            # set — and a passwordless refresh then fails *silently* inside
-            # RefreshAll, which looks like a successful refresh that changed nothing.
-            table.QueryTable.SavePassword = True
-            built = f"live ODBC connection via '{driver}'"
+            table.QueryTable.CommandText = "SELECT * FROM [Orders]"
+            # Refreshing here prompts for the per-user Power Query credential;
+            # the first refresh belongs to the person configuring the workbook.
+            built = f"Power Query via '{driver}'"
         else:
             workbook.Queries.Add(
                 "Orders",
@@ -379,7 +388,8 @@ def make_workbook(workbook_path: str, mysql_url: str) -> str:
             table.QueryTable.CommandText = "SELECT * FROM [Orders]"
             built = "placeholder Power Query (no MySQL ODBC driver installed)"
         table.QueryTable.BackgroundQuery = False
-        table.QueryTable.Refresh(False)
+        if not driver:
+            table.QueryTable.Refresh(False)
         workbook.Connections(1).Name = "MySQL - demo_orders" if driver else "Query - Orders"
         workbook.SaveAs(str(path), FileFormat=51)  # xlOpenXMLWorkbook (.xlsx)
     finally:
@@ -451,13 +461,13 @@ Next steps:
      claimed by a Windows engine (python -m process_engine), not by a Linux API.
   3. Workbook: --make-workbook builds one at
        {workbook}
-     with a live ODBC connection to demo_orders when a MySQL ODBC driver is
-     installed (placeholder query otherwise). Rolling your own Power Query
-     workbook instead? Its first refresh must be done by hand in Excel (Data ->
-     Refresh All -> Connect) — Power Query stores credentials per Windows user
-     and refuses them embedded in connection strings; after that one grant the
-     engine refreshes it unattended. Without any workbook, the refresh step
-     routes its failure to the warning log and the run still completes.
+    with a Power Query backed by MySQL ODBC against demo_orders when a driver
+    is installed (placeholder query otherwise). Its first refresh must be done
+    by hand in Excel (Data -> Refresh All -> Connect) — Power Query stores
+    credentials per Windows user and refuses them embedded in connection
+    strings; after that one grant the engine refreshes it unattended. Without
+    any workbook, the refresh step routes its failure to the warning log and
+    the run still completes.
 
 Re-run this script any time to reset: every order goes back to status 'new',
 and both demo processes are restored to their original definitions (edits made

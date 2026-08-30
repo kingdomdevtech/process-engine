@@ -159,8 +159,16 @@ export const TOUR_STEPS = [
     anchor: 'layout-menu',
     placement: 'bottom',
     title: 'Keeping it readable',
-    body: 'Choose whether the canvas reads left to right or top to bottom, and re-lay every step in dependency order with Tidy up. Both are undoable.',
+    body: 'Choose whether the canvas reads left to right or top to bottom, and re-lay every step in dependency order with Tidy up. Both are undoable. Arrows always leave the side of a card that faces where they are going, so a step you drag somewhere yourself still reads properly.',
     keys: [['Ctrl', 'Shift', 'L']],
+  },
+  {
+    id: 'history',
+    chapter: 'Building',
+    anchor: 'history',
+    placement: 'bottom',
+    title: 'The way back',
+    body: 'Undo only lasts as long as this tab. History lists every save, publish, move and sharing change with who made it, and restores any of them onto the canvas as a draft — published versions are left alone, and the restore is recorded too, so you can come straight back.',
   },
 
   {

@@ -137,7 +137,15 @@ cd designer
 npm install
 npm run dev                             # http://localhost:5173, proxies /api to :8000
 npm run build                           # production build; the API then serves it on :8000
+npx playwright install chromium         # once, for the browser tests
+npx playwright test                     # drives the designer; needs the API, an engine and :5173
 ```
+
+The browser tests are a real user at the keyboard — they sign in, build a process from
+the palette and read the run timeline, and never call the API from inside the page. The
+specs in `designer/tests/demo/` double as fixtures: each one leaves a real published
+process behind in the `demo` folder (`Demo MySQL order review`), rebuilt from scratch
+every run, tables and all.
 
 The app is a multi-page product, not a single canvas: a public **landing page** at `/`,
 sign-in at `/login`, then the workspace — **Dashboard** (`/app`), **Editor**
@@ -160,7 +168,11 @@ talks to one host and CORS never enters the picture. See the
 Processes are organised into **folders** on the dashboard — collapsible groups with
 search and a folder filter. A folder is just a label on the definition (set it in the
 editor breadcrumb or with *Move…* on a card), so no schema migration is involved and
-processes saved before folders existed simply show as *Uncategorized*.
+processes saved before folders existed simply show as *Uncategorized*. One name means
+something: a process in the **`demo`** folder cannot be deleted — the API answers `409`
+and the card's Delete is disabled, naming the folder — so the sample processes the
+browser tests build survive a stray click. *Move to folder…* is enabled right above it,
+which is the way out, and it leaves a `moved` entry in the process's history.
 
 Sign in first: the designer asks for credentials. Bootstrap with the API token
 (printed to `.process_engine_auth` on first start, or set
@@ -197,7 +209,17 @@ right or top to bottom — and *Tidy up steps* (Ctrl+Shift+L, or the Ctrl+K
 palette) re-positions every step in dependency order, so a graph that has been
 dragged into a tangle takes one keystroke to straighten out. The direction is a
 per-browser preference rather than part of the definition, and both actions are
-undoable.
+undoable. The direction decides where the layout *puts* steps and nothing else: each
+arrow leaves whichever side of a card faces the step it points at, so a step dragged out
+to the side keeps a readable arrow, one canvas can be wired left-to-right and
+top-to-bottom at once, and a Condition's `true`/`false` arrows fan out along that edge in
+port order.
+
+Ctrl+Z lasts as long as the tab; the **History** button next to it is the way back after
+that. Every save, publish, share and folder move is an entry with the person who made it,
+and any entry that changed the definition can be restored — onto the canvas as a *draft*,
+so nothing scheduled changes until you publish. The restore is itself an entry, so it is
+one click to come back.
 
 ### MySQL instead of SQLite
 
@@ -381,7 +403,9 @@ All routes require `Authorization: Bearer <session-or-api-token>` except
 | `GET /api/workspace` | The working directory file plugins are confined to (read-only; set by env var) |
 | `POST /api/processes` / `GET /api/processes[?folder=]` | Create draft / list (optionally one folder) |
 | `GET /api/folders`, `PUT /api/processes/{id}/folder` | Folders in use with counts / move a process |
-| `GET/PUT/DELETE /api/processes/{id}` | Read / update draft / delete |
+| `GET/PUT/DELETE /api/processes/{id}` | Read / update draft / delete (refused with `409` while the process is in the protected `demo` folder) |
+| `GET /api/processes/{id}/history` | Who changed it, when, and what it looked like — one entry per save, publish, share, move or restore |
+| `POST /api/processes/{id}/history/{audit_id}/restore` | Write that entry's snapshot back as the current draft (and record the restore) |
 | `POST /api/processes/{id}/validate` | Static checks; issues carry `step_id` for node badges |
 | `POST /api/processes/{id}/publish` | Snapshot an immutable version (refused if invalid) |
 | `POST /api/processes/{id}/run` | Queue a run of the draft or a published version; answers with the PENDING instance to poll |
@@ -402,4 +426,5 @@ Interactive docs at `http://127.0.0.1:8000/docs` while the API is running.
 - **Observability**: run metrics dashboard, sub-run drill-down for `for_each`, OpenTelemetry.
 - **Webhooks**: HMAC signature validation and per-hook secrets.
 - **Plugins**: config-migration hooks for plugin version upgrades; sandboxed third-party execution.
-- **Audit log** of who edited/published/ran what.
+- **Audit log**: edits, publishes, shares and moves are recorded and restorable
+  (`process_audits`); *who ran what* is still only in the run history.

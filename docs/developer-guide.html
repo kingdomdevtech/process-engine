@@ -332,6 +332,18 @@ because <code>over</code> fired, and nothing had to be told to stop.</p>
   and iteration is <code>for_each</code> running a sub-process, never a loop edge.
 </div>
 
+<p><b>The port names you declare are a contract with everything that draws or writes an arrow.</b>
+<code>validate()</code> rejects a connection whose <code>source_port</code> your manifest does not
+declare (<code>error</code> aside), so a step's ports decide what can legally point out of it. Most
+plugins declare one port called <code>main</code> and nothing has to think about this; the moment
+yours does not — the <code>threshold</code> above, or the built-in Condition with only
+<code>true</code> and <code>false</code> — anything auto-wiring a connection has to take the first
+port you declare instead. The designer does exactly that (<code>defaultPort</code>: the step's
+<code>main</code> where it has one, otherwise its first output), so <b>declare the ports in the
+order a person would try them</b> — the happy path first. A test or a script building a definition
+by hand owes the same care: assuming <code>main</code> writes a process that saves and then cannot
+be published.</p>
+
 <p class="chapter">Chapter 6</p>
 <h2 id="blocking">6. Blocking work</h2>
 
@@ -615,12 +627,14 @@ cd designer; npx playwright test                            # needs API :8000, a
   every UI spec, and the helpers for them live in <code>designer/tests/support/designer.js</code> —
   use those rather than writing the assertion again.
   <ul>
-    <li><code>expectRunPassed(page, steps)</code> — <strong>no failed step and no skipped
-        step</strong>. Skipped is the quiet one: a step whose upstream delivered nothing is skipped
-        rather than failed and the run still reports success, so a spec that checks only the run
-        badge passes while half the process never happened. The gate is the timeline reading
+    <li><code>expectRunPassed(page, steps, { skipped })</code> — <strong>no failed step, and every
+        skip declared</strong>. Skipped is the quiet one: a step whose upstream delivered nothing is
+        skipped rather than failed and the run still reports success, so a spec that checks only the
+        run badge passes while half the process never happened. The gate is the timeline reading
         <code>Steps · n/n</code> with Succeeded as the only status badge in it — pending or running
-        means the poll gave up early.</li>
+        means the poll gave up early. A branch is the one honest reason for a skip: a spec covering a
+        Condition says how many with <code>{ skipped: n }</code> and the count is checked
+        <em>exactly</em>, so a skip is accounted for and never merely tolerated.</li>
     <li><code>expectNoDisconnectedStep(page)</code> — before every save and after the run. Every
         step is reached by the trigger box or another step; one that nothing points at never runs,
         and a canvas showing one is a process that silently does less than it looks like it does.
@@ -632,7 +646,9 @@ cd designer; npx playwright test                            # needs API :8000, a
         it, queueing a run and reading the timeline is seconds of work on a healthy stack, so a spec
         that needs longer is reporting a problem: an engine that is not claiming, a step that is
         retrying, a wait that is really a hang. Let it fail and name it; never lift the ceiling with
-        <code>test.setTimeout</code>.</li>
+        <code>test.setTimeout</code>. A flow that genuinely does more than fits is split into two
+        <code>test()</code>s in a <code>test.describe.serial</code>, so each keeps its own
+        budget.</li>
   </ul>
 </div>
 
@@ -642,7 +658,19 @@ so clicking one of a stack is ambiguous for a person and for the test alike. And
 control by role, <code>getByRole('textbox', { name: 'Query' })</code>, rather than by its label:
 the <b>ƒx</b> button beside every field carries
 <code>aria-label="Insert a value from an earlier step into <em>Title</em>"</code>, so
-<code>getByLabel('<em>Title</em>')</code> matches two elements.</p>
+<code>getByLabel('<em>Title</em>')</code> matches two elements. A field the plugin typed as
+<code>Any</code> — a Condition's <code>left</code>, <code>for_each</code>'s <code>items</code> —
+renders the value editor, which commits on <b>blur</b>: <code>fill()</code> then move on, or the
+save records the old value.</p>
+
+<p><code>designer/tests/demo/</code> is where a spec goes that leaves a real published process
+behind for people to look at. <code>demo/mysql-for-each.spec.js</code> is the worked example and
+the one to read before writing another: it builds its own table with a step, runs two lanes off one
+query, wires a Condition to two updating branches after a <code>for_each</code>, and rebuilds itself
+from scratch on every run — a fixed name in the <code>demo</code> folder, cleared by
+<code>removeDemoProcess</code>. That helper moves the old process out of the folder before deleting
+it, because the API refuses to delete one that is in <code>demo</code>, which makes the demo spec
+the test of that guard as well.</p>
 
 <p class="chapter">Chapter 13</p>
 <h2 id="package">13. Packaging as a pip installable</h2>

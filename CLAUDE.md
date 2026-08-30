@@ -44,18 +44,26 @@ script — that bypasses the user path, hides the real validation errors, and ma
 ```powershell
 cd designer; npm install; npx playwright install chromium   # once
 cd designer; npx playwright test                            # needs API :8000, an engine, and vite :5173
-cd designer; npx playwright test mysql-for-each.spec.js --reporter=line
+cd designer; npx playwright test demo/mysql-for-each.spec.js --reporter=line
 ```
+
+`.claude/skills/playwright-ui-test/` is this section in full, as a skill, with the helper
+inventory and the locator conventions; `.github/prompts/new-ui-test.prompt.md` is its Copilot
+counterpart. A change to the rules below is a change to both.
 
 **Three things are mandatory in every UI spec, and a green Playwright report without them is
 not a pass.** The helpers that assert them live in `designer/tests/support/designer.js`; use
 those rather than rolling the assertion again:
 
-- **No failed step and no skipped step** — `expectRunPassed(page, steps)`. "Skipped" is the
-  quiet one: a step whose upstream delivered nothing is skipped rather than failed and the run
-  still reports success, so a spec that only checks the run badge passes while half the process
-  never happened. The gate is the timeline reading `Steps · n/n` with Succeeded as the only
-  status badge in it — pending or running means the poll gave up early.
+- **No failed step, and every skip declared** — `expectRunPassed(page, steps, { skipped })`.
+  "Skipped" is the quiet one: a step whose upstream delivered nothing is skipped rather than
+  failed and the run still reports success, so a spec that only checks the run badge passes
+  while half the process never happened. The gate is the timeline reading `Steps · n/n` — it
+  counts only *succeeded* steps — with Succeeded as the only status badge in it; pending or
+  running means the poll gave up early. A branch is the one honest reason for a skip, since a
+  Condition sends its input down one port and the steps on the other are skipped by design: say
+  how many with `{ skipped: n }` and the count is checked *exactly*. A skip is accounted for,
+  never tolerated — if a spec cannot name the branch that produced it, the process is wrong.
 - **No disconnected step** — `expectNoDisconnectedStep(page)`, before every save and after the
   run. Every step is reached by the trigger box or another step; one that nothing points at
   never runs, and a canvas showing one is a process that silently does less than it looks like
@@ -76,7 +84,28 @@ Two more rules that come out of what these specs actually catch. Tidy the canvas
 where the cards overlap, so clicking one of a stack is ambiguous for a person and for the test
 alike. And address a form control by role (`getByRole('textbox', { name: 'Query' })`), not by
 label text: the **ƒx** button beside every field carries `aria-label="Insert a value from an
-earlier step into <Title>"`, so `getByLabel('<Title>')` matches two elements.
+earlier step into <Title>"`, so `getByLabel('<Title>')` matches two elements. Note that an
+untyped (`Any`) config field — a Condition's `left`/`right`, `for_each`'s `items` — renders the
+value editor, which commits on **blur** so a number stays a number: `fill()` then `blur()`.
+
+### `designer/tests/demo/` builds the demo processes
+
+A spec in there is a fixture as much as a test: it leaves a real, published process behind in
+the `demo` folder for someone to open, so it uses a **fixed name** and deletes and rebuilds it
+on every run (`removeDemoProcess`). `mysql-for-each.spec.js` is the worked example — a schedule
+on the trigger box, a step that creates and seeds a table, a MySQL query, then two lanes off it
+running at once: a Log step counting the rows, and a `for_each` handing them on to a Condition
+whose two branches update the order the rows named. It is **one** process, which is what fixes
+`for_each` to its `next_step` mode: the other mode runs a published sub-process per item and is
+the only way a Condition is reached once per row, so the Condition here runs once, over the
+batch. A spec that changes the demo's shape has to keep that trade-off stated in its docstring,
+because the graph on screen does not show it.
+
+Two things follow from the UI-only rule. The demo **creates and seeds its own tables as steps**,
+because a spec may not reach past the UI to set one up — which makes for a better demo anyway.
+And the delete has to go *through* the folder guard: a process in `demo` cannot be deleted until
+it is moved out (see _Auth, users, secrets_ below), so `removeDemoProcess` asserts the disabled
+Delete, moves it out, then deletes — and is therefore also the test of the guard.
 
 ## Three distributions, and what each host installs
 
@@ -149,7 +178,11 @@ Three strictly separated layers; keep them that way:
    category, so a new plugin still needs no frontend code. The palette and per-step config
    forms are generated from `GET /api/plugins` (manifest + each Plugin's
    `Config.model_json_schema()`); there is no per-plugin frontend code. Edge `sourceHandle`
-   becomes `Connection.source_port`. `SchemaForm.jsx` picks each control from the JSON Schema
+   becomes `Connection.source_port` — so every arrow the editor draws for you goes through
+   `flowEdge(source, target, port)` and takes its port from `defaultPort(node)`: the step's
+   `main` where it has one, otherwise the first thing it emits. Assuming `main` on a Condition
+   authored a connection `validate()` rejects, which is a save the editor made unpublishable.
+   `SchemaForm.jsx` picks each control from the JSON Schema
    type — `list[str]` is a chip editor, `dict[str, X]` a name/value editor — and a plugin
    refines that with the `x-ui` hints described under _Config forms_ below. Schema
    `format: "html"` on a string field renders the HTML editor — see `send_email_ses`'s
@@ -162,7 +195,9 @@ Three strictly separated layers; keep them that way:
    come from?" is a question about the graph, so `StepInput`'s source select **edits** the
    graph rather than shadowing it: picking a step (or the trigger box) re-points the incoming
    arrow through `connectFrom`, and only steps this one cannot already reach are offered, since
-   an arrow back would be a cycle the save rejects. A published *process* is offered too, but
+   an arrow back would be a cycle the save rejects. A step that branches is offered **once per
+   branch** (`check amount (true)` / `check amount (false)`, encoded `step:<id>:<port>`), because
+   "after the check" is not an answer the graph can hold. A published *process* is offered too, but
    only for a step that can take one (`for_each`) — that is not an arrow on this canvas, so it
    is wired by writing the step's own `process_id` and leaving the incoming arrow, which still
    delivers the list, alone. `StepOutput` handles both
@@ -170,7 +205,9 @@ Three strictly separated layers; keep them that way:
    telling the user whether anything is listening; `Editor`'s `runDraft` does the same for a
    run that comes back non-terminal, so nothing in the designer knows which host executed.
    Undo/redo covers canvas
-   structure only (drop/connect/delete/drag), by design. Validation badges come from
+   structure only (drop/connect/delete/drag), by design; `HistoryDialog.jsx` behind the
+   toolbar's History button is the way back once the tab has been closed and undo has gone
+   with it (`/history`, and _Restore_ on an entry that carries a snapshot). Validation badges come from
    client-side required-field checks plus `/validate`'s `detailed[].step_id`; step-level
    issues badge the node, process-level ones surface in a banner over the canvas. `position`
    is designer-owned, so a definition built by the API or a test has every step at (0,0) —
@@ -178,11 +215,21 @@ Three strictly separated layers; keep them that way:
    gates it) without writing back. That same function backs the _Tidy up steps_ command
    (Ctrl+Shift+L), which does write positions and is undoable. `layout.js` also owns the
    canvas orientation (`horizontal | vertical`, stored in `pe_canvas_dir`): like the theme
-   it is a per-browser preference, deliberately _not_ part of the definition, and
-   `StepNode.jsx` reads it to move its handles between the sides and the top/bottom — moving
-   a handle needs `useUpdateNodeInternals` or the edges keep their old anchors. Flipping the
-   direction re-runs the layout, since the old positions would leave every edge doubling
-   back. **The graph the editor holds is not the graph it draws.** A step with nothing
+   it is a per-browser preference, deliberately _not_ part of the definition, and it now
+   decides **where _Tidy up steps_ puts things and nothing else**. Which border an arrow
+   attaches to is a question about where the two cards are, not about how the canvas is laid
+   out, so it is answered per edge in `FloatingEdge.jsx` from the geometry React Flow has
+   already measured (`facingSides`, judged against the cards' own size so "beside" means the
+   border the line between the centres really crosses). That is what lets one canvas be wired
+   left-to-right and top-to-bottom at once, and what stops a hand-placed step being left with
+   an arrow doubling back to an anchor on the wrong face of the card. A source card with more
+   than one port spreads its arrows along the facing border in port order, so a Condition's two
+   branches stay tellable apart wherever the cards sit. `StepNode.jsx` still moves its
+   *handles* — where a connection is dragged from — between the sides and the top/bottom with
+   the orientation, and moving a handle needs `useUpdateNodeInternals` or React Flow keeps the
+   old anchors and refuses to draw an edge whose handle has no known position. Flipping the
+   direction re-runs the layout, since the old positions would no longer read as a flow.
+   **The graph the editor holds is not the graph it draws.** A step with nothing
    upstream _is_ the step the engine hands the trigger payload to, so the arrow from the
    trigger box is derived from that fact (`rootIds` → `canvasEdges`) rather than stored:
    it survives a save and reload (connections to the trigger box are not part of a
@@ -328,7 +375,21 @@ drive-by fix.
   leaks. Run history inherits the process's access (`_run_or_404`) because step inputs and
   outputs are as revealing as the definition. No-access is **404, not 403** — a 403 confirms
   the id belongs to a real process. A clone belongs to whoever made it and starts unshared.
-  `tests/test_sharing.py` covers all of this.
+  `tests/test_sharing.py` covers all of this. The edit history is a read of the process, so
+  `GET /processes/{id}/history` and `POST /processes/{id}/history/{audit_id}/restore` go behind
+  the same `_get_or_404`, and an entry belonging to another process is a 404 rather than a
+  cross-process restore.
+- **A folder can make a process undeletable.** `DELETE /processes/{id}` is refused with **409**
+  while the process sits in a folder named in `PROTECTED_FOLDERS` (`{"demo"}`, compared
+  case-insensitively because a person types it into a free-text box), and `_visible_processes`
+  reports `protected` on every row so the designer reads the rule off the row instead of
+  keeping its own copy. 409 and not 403: nothing is wrong with the caller — the process is in a
+  state that does not allow this. It is not a lock, and `PUT /processes/{id}/folder` is
+  deliberately *not* guarded in either direction, because the move **is** the way out and
+  refusing it would turn a folder name into something nobody could undo. The demo processes
+  built by `designer/tests/demo/` are what a new person is shown first, and a delete on the
+  dashboard is one click away from a name that looks disposable — hence a guard rather than
+  trust. `tests/test_process_history.py` covers the guard and the history together.
 - **Settings is admin-only, and deliberately holds only deployment configuration** — the mail
   relay, execution mode and engine hosts, the file sandbox, users, the installed plugin
   inventory (`GET /api/queue` is open to any signed-in user, since it explains a spinner they
@@ -476,6 +537,18 @@ used. The `settings` table is the one place an admin-editable _deployment_ setti
 JSON document per key; only the notification relay so far) — anything security-shaped stays
 env-only, as the file sandbox does.
 
+`process_audits` is the edit history of a process: one row per change (`created`, `updated`,
+`published`, `shared`, `moved`, `restored`) with the actor, a human summary, `latest_version`
+as it stood, and — this is what makes it more than a log — a **snapshot of the draft**. So
+"put it back to how it was on Tuesday" is reading a row rather than reconstructing a diff, and
+a restore is an ordinary edit that writes that document back (recorded itself, so it too can be
+undone). A change that left the definition alone passes no document and is simply not
+restorable; `created_by`/`shared_with` are taken from the row that exists now, so a snapshot
+can never grant access it happens to remember. Published versions are untouched: `restore`
+never rolls `latest_version` back. Rows belong to their process and go when it does — this is a
+history, not a recycle bin, which is why anything undeletable is protected by its **folder**
+(see `PROTECTED_FOLDERS` under _Auth_) rather than by keeping its history around.
+
 Four tables exist purely to coordinate the two hosts, and are the only state they share
 beyond definitions and runs: `job_queue` (work to claim, runs and previews alike),
 `run_signals` (pause/cancel across the boundary), `schedule_state` (cron due times, claimed by
@@ -557,7 +630,9 @@ a change that moves the interface is a change to both.
 `copilot-instructions.md` (repo-wide — layers, commands, the invariants that break saved data)
 and `instructions/*.instructions.md`, each scoped by an `applyTo` glob to plugins, the
 designer, Python, tests or docs. `prompts/*.prompt.md` are reusable `/new-plugin`,
-`/run-local` and `/review-invariants` tasks. This file stays authoritative — it explains the
+`/new-ui-test`, `/run-local` and `/review-invariants` tasks —
+`.claude/skills/playwright-ui-test/` is the Claude Code side of that last pair.
+This file stays authoritative — it explains the
 reasoning; those state the rule — so a design change is an edit to both, or they drift.
 `workflows/copilot-setup-steps.yml` only provisions the cloud coding agent on GitHub (Ubuntu,
 so no `excel` extra); it has no effect locally.

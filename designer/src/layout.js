@@ -9,6 +9,12 @@ import { useSyncExternalStore } from 'react'
  * designer-owned data a ProcessDefinition carries, and an orientation baked
  * into the document would decide for everyone who opens it. So it sits beside
  * the theme instead: one setting per browser, applied to every process.
+ *
+ * It decides where *Tidy up steps* puts things, and nothing else. Which border
+ * of a card an arrow leaves from is worked out per edge from where the two
+ * cards actually are (`FloatingEdge.jsx`), so one canvas can be wired left to
+ * right and top to bottom at the same time and a hand-placed step is never left
+ * with an arrow doubling back to the wrong face of it.
  */
 const KEY = 'pe_canvas_dir'
 const DIRECTIONS = ['horizontal', 'vertical']

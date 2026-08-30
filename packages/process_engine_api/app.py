@@ -83,6 +83,19 @@ logger = logging.getLogger("process_engine_api")
 # looking at the spinner it explains.
 WORKER_STALE_SECONDS = 60.0
 
+# Folders whose processes cannot be deleted through the API, however they are
+# reached. The demo processes are built by `designer/tests/demo/`, they are what
+# a new person is shown first, and a delete on the dashboard is one click away
+# from a name that looks disposable — so the folder is the protection. It is not
+# a lock: moving a process out of the folder is an ordinary edit, and then it
+# deletes like anything else. `folder` is compared case-insensitively because a
+# person types it into a free-text box.
+PROTECTED_FOLDERS = frozenset({"demo"})
+
+
+def is_protected(folder: str | None) -> bool:
+    return (folder or "").strip().lower() in PROTECTED_FOLDERS
+
 
 class RunRequest(BaseModel):
     trigger_input: Any = None
@@ -472,6 +485,33 @@ def create_app(
             raise HTTPException(status_code=404, detail="process not found")
         return definition
 
+    def _actor(request: Request) -> str:
+        return request.state.principal.get("name", "")
+
+    def _audit(
+        process_id: str,
+        action: str,
+        request: Request,
+        *,
+        summary: str = "",
+        document: ProcessDefinition | None = None,
+    ) -> None:
+        """Append to a process's history.
+
+        Every route that changes a definition calls this, so the history is a
+        record of what happened rather than of what someone remembered to log.
+        ``document`` is the draft as it stands *after* the change — that is what
+        a restore writes back, so a change that left the definition alone (a
+        share) passes none and simply cannot be restored to.
+        """
+        db.record_audit(
+            process_id,
+            action,
+            actor=_actor(request),
+            summary=summary,
+            document=document.model_dump(mode="json") if document is not None else None,
+        )
+
     # -- plugins -------------------------------------------------------------------
 
     @api.get("/plugins")
@@ -502,7 +542,9 @@ def create_app(
         # the creator is whoever called, never whatever the client sent: it is an
         # identity, and notifications are addressed to it
         definition.created_by = request.state.principal.get("name", "")
-        return db.save_process(definition)
+        saved = db.save_process(definition)
+        _audit(saved.id, "created", request, summary=f"Created “{saved.name}”", document=saved)
+        return saved
 
     def _visible_processes(request: Request) -> list[dict[str, Any]]:
         """The listing rows this caller is allowed to see.
@@ -510,16 +552,25 @@ def create_app(
         ``created_by``/``shared_with`` live in the definition document, which
         ``list_processes`` already has in hand — so this filters without a second
         read, the same way ``folder`` is pulled out of the document.
+
+        ``protected`` is decided here rather than in storage: which folders are
+        undeletable is a policy of this API, not a property of the record, and
+        the designer should be reading it off the row instead of keeping its own
+        copy of the rule.
         """
         principal = request.state.principal
         if principal.get("role") == "admin":
-            return db.list_processes()
-        name = principal.get("name", "")
-        return [
-            entry
-            for entry in db.list_processes()
-            if name and (entry["created_by"] == name or name in entry["shared_with"])
-        ]
+            rows = db.list_processes()
+        else:
+            name = principal.get("name", "")
+            rows = [
+                entry
+                for entry in db.list_processes()
+                if name and (entry["created_by"] == name or name in entry["shared_with"])
+            ]
+        for entry in rows:
+            entry["protected"] = is_protected(entry["folder"])
+        return rows
 
     @api.get("/processes")
     def list_processes(request: Request, folder: str | None = None) -> list[dict[str, Any]]:
@@ -544,11 +595,25 @@ def create_app(
         ]
 
     @api.put("/processes/{process_id}/folder")
-    def move_process(process_id: str, body: FolderRequest, request: Request) -> dict[str, str]:
+    def move_process(process_id: str, body: FolderRequest, request: Request) -> dict[str, Any]:
+        """Move a process between folders.
+
+        Deliberately not guarded for protected folders in either direction: the
+        move *is* the way out of one, and refusing it would turn a folder name
+        into a lock nobody could undo.
+        """
         definition = _get_or_404(process_id, request)
+        was = definition.folder
         definition.folder = body.folder.strip()
-        db.save_process(definition)
-        return {"id": process_id, "folder": definition.folder}
+        saved = db.save_process(definition)
+        _audit(
+            process_id,
+            "moved",
+            request,
+            summary=f"Moved from “{was or 'Uncategorized'}” to “{saved.folder or 'Uncategorized'}”",
+            document=saved,
+        )
+        return {"id": process_id, "folder": saved.folder, "protected": is_protected(saved.folder)}
 
     @api.get("/processes/{process_id}", response_model=ProcessDefinition)
     def get_process(process_id: str, request: Request) -> ProcessDefinition:
@@ -567,7 +632,15 @@ def create_app(
         # than let a save erase them, or let a client grant itself access
         definition.created_by = existing.created_by
         definition.shared_with = existing.shared_with
-        return db.save_process(definition)
+        saved = db.save_process(definition)
+        _audit(
+            process_id,
+            "updated",
+            request,
+            summary=f"{len(saved.steps)} step(s), {len(saved.connections)} connection(s)",
+            document=saved,
+        )
+        return saved
 
     @api.post("/processes/{process_id}/share", response_model=ProcessDefinition)
     def share_process(process_id: str, body: ShareRequest, request: Request) -> ProcessDefinition:
@@ -584,7 +657,16 @@ def create_app(
         if unknown:
             raise HTTPException(status_code=422, detail=f"unknown or disabled user(s): {', '.join(unknown)}")
         definition.shared_with = sorted({name for name in body.usernames if name != definition.created_by})
-        return db.save_process(definition)
+        saved = db.save_process(definition)
+        # no snapshot: sharing changed who can reach the process, not the process,
+        # and restoring an access list is not what "revert my edit" should mean
+        _audit(
+            process_id,
+            "shared",
+            request,
+            summary=f"Shared with {', '.join(saved.shared_with)}" if saved.shared_with else "Sharing removed",
+        )
+        return saved
 
     @api.post("/processes/{process_id}/clone", response_model=ProcessDefinition)
     def clone_process(
@@ -594,7 +676,7 @@ def create_app(
         Database.clone_process. The copy belongs to whoever cloned it and starts
         unshared: inheriting the original's share list would hand its audience a
         process they never agreed to follow."""
-        _get_or_404(process_id, request)  # 404 unless the caller can see the original
+        original = _get_or_404(process_id, request)  # 404 unless the caller can see it
         body = body or CloneRequest()
         clone = db.clone_process(
             process_id,
@@ -604,11 +686,28 @@ def create_app(
         )
         if clone is None:
             raise HTTPException(status_code=404, detail="process not found")
+        _audit(clone.id, "created", request, summary=f"Copied from “{original.name}”", document=clone)
         return clone
 
     @api.delete("/processes/{process_id}")
     def delete_process(process_id: str, request: Request) -> dict[str, bool]:
-        _get_or_404(process_id, request)  # 404 for a process this caller cannot see
+        """Delete a process, its published versions and its history.
+
+        Refused outright while it sits in a protected folder — 409 rather than
+        403, because nothing is wrong with the caller: the process is in a state
+        that does not allow this, and moving it out of the folder is the way to
+        change that. The reply says so, since a designer that only shows "cannot
+        delete" leaves someone hunting for a permission they do not need.
+        """
+        definition = _get_or_404(process_id, request)  # 404 if this caller cannot see it
+        if is_protected(definition.folder):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"“{definition.name}” is in the protected “{definition.folder}” folder and cannot be "
+                    "deleted. Move it to another folder first if you really mean to."
+                ),
+            )
         if not db.delete_process(process_id):
             raise HTTPException(status_code=404, detail="process not found")
         return {"deleted": True}
@@ -625,7 +724,62 @@ def create_app(
             raise HTTPException(status_code=422, detail={"issues": issues})
         published = db.publish_process(process_id)
         assert published is not None  # existence checked above
+        # the draft is what a restore writes back, so that is what is snapshotted
+        # here too — the published version itself is immutable and needs no copy
+        _audit(
+            process_id,
+            "published",
+            request,
+            summary=f"Published version {published.version}",
+            document=db.get_process(process_id),
+        )
         return published
+
+    # -- process history (audit trail, and reverting to an earlier draft) -------------
+
+    @api.get("/processes/{process_id}/history")
+    def process_history(process_id: str, request: Request) -> list[dict[str, Any]]:
+        """What has happened to this process, newest first.
+
+        Behind ``_get_or_404`` like every other read of a process: the history
+        names who edited it and what shape it was in, which is as revealing as
+        the definition itself.
+        """
+        _get_or_404(process_id, request)
+        return db.list_audits(process_id)
+
+    @api.post("/processes/{process_id}/history/{audit_id}/restore", response_model=ProcessDefinition)
+    def restore_process(process_id: str, audit_id: str, request: Request) -> ProcessDefinition:
+        """Put the draft back to how it stood at one history entry.
+
+        A restore is an ordinary edit, not a rewind: it writes the snapshot back
+        as the **draft** and is itself recorded, so the entry it replaced is
+        still there to go back to. Published versions are untouched —
+        ``save_process`` keeps ``latest_version``, so restoring an old draft
+        never un-publishes anything and never changes what a schedule runs until
+        somebody publishes again. ``created_by`` and ``shared_with`` are carried
+        over from the live process for the same reason ``update_process`` carries
+        them: they are access, not content, and a snapshot must not be able to
+        hand out either.
+        """
+        existing = _get_or_404(process_id, request)
+        entry = db.get_audit(audit_id)
+        if entry is None or entry["process_id"] != process_id or entry.get("document") is None:
+            raise HTTPException(status_code=404, detail="history entry not found")
+
+        restored = ProcessDefinition.model_validate(entry["document"])
+        restored.id = process_id
+        restored.created_by = existing.created_by
+        restored.shared_with = existing.shared_with
+        saved = db.save_process(restored)
+        _audit(
+            process_id,
+            "restored",
+            request,
+            summary=f"Restored the state from {entry['at']} ({entry['action']})",
+            document=saved,
+        )
+        return saved
 
     # -- runs -------------------------------------------------------------------------
 

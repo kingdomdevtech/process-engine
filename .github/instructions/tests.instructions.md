@@ -33,11 +33,18 @@ applyTo: "tests/**/*.py"
   state. They never call `/api/*` directly from the script — a direct API request is not a
   user flow and is explicitly disallowed.
 - A UI spec passes only with all three mandatory gates, from
-  `designer/tests/support/designer.js`: `expectRunPassed(page, steps)` (no failed **and no
-  skipped** step — `Steps · n/n`, Succeeded the only badge), `expectNoDisconnectedStep(page)`
+  `designer/tests/support/designer.js`: `expectRunPassed(page, steps, { skipped })` (no failed
+  step, and `Steps · n/n` counting only the succeeded ones — a Condition's untaken branch is the
+  one honest skip, and declaring it checks the count exactly), `expectNoDisconnectedStep(page)`
   (every step reached by the trigger box or another step, asserted per step id with a retrying
   `toHaveCount`), and the 60-second per-test ceiling in `playwright.config.js` — a slow UI spec
-  is a bug report, so never lift it with `test.setTimeout`.
+  is a bug report, so never lift it with `test.setTimeout`. Split a long flow into two `test()`s
+  in a `test.describe.serial` instead.
+- `designer/tests/demo/` builds the demo processes: a spec there leaves a real published
+  process behind in the `demo` folder, so it uses a fixed name and clears the previous one with
+  `removeDemoProcess` — which deletes *through* the folder's 409 guard and is therefore also the
+  test of it. Data such a demo needs is created by a step in the process, never by an API call.
+- `.github/prompts/new-ui-test.prompt.md` is the full walkthrough for writing one.
 
 What the suites guard, so a change lands in the right one:
 
@@ -52,6 +59,7 @@ What the suites guard, so a change lands in the right one:
 | `test_file_plugins.py` | Sandbox containment, including entries discovered by a walk |
 | `test_api.py` / `test_users.py` / `test_sso.py` / `test_http_auth.py` | Routes, roles, session revocation, OIDC |
 | `test_sharing.py` | Who can see a process and its runs; 404-not-403 |
+| `test_process_history.py` | The `process_audits` trail and restore-to-an-earlier-draft, and the `demo` folder's 409 delete guard |
 | `test_scheduler.py` | Cron/trigger firing against the latest published version, and firing once when several schedulers watch one database |
 | `test_worker.py` | The queue: claim/lease, cross-process pause/cancel, queued previews, an engine host firing its own schedules, and that the engine runs a job with the whole web stack unimportable |
 

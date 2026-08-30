@@ -195,7 +195,7 @@ an HTTP endpoint, a mail relay.</p>
       <text class="s" x="505" y="184" text-anchor="middle">MySQL / Postgres · SQLite in dev</text>
       <line class="hair" x1="406" y1="198" x2="604" y2="198"/>
       <text class="ms" x="505" y="220" text-anchor="middle">processes · process_versions</text>
-      <text class="ms" x="505" y="238" text-anchor="middle">process_instances</text>
+      <text class="ms" x="505" y="238" text-anchor="middle">process_instances · process_audits</text>
       <text class="ms" x="505" y="256" text-anchor="middle">job_queue · run_signals</text>
       <text class="ms" x="505" y="274" text-anchor="middle">schedule_state · workers</text>
       <text class="ms" x="505" y="292" text-anchor="middle">secrets · settings · users</text>
@@ -454,6 +454,7 @@ only state the halves share beyond the work itself.</p>
   <tr><th>Table</th><th>What it holds</th><th>Who writes it</th></tr>
   <tr><td><code>processes</code></td><td>The editable draft, one row per process. <code>created_by</code> and <code>shared_with</code> are server-owned.</td><td>API</td></tr>
   <tr><td><code>process_versions</code></td><td>Immutable published snapshots. A run records the version it used, so this must stay immutable.</td><td>API, on publish</td></tr>
+  <tr><td><code>process_audits</code></td><td>One row per change to a process — created, updated, published, shared, moved, restored — with the actor, a summary, and a snapshot of the draft for the kinds that changed it. That snapshot is what <em>Restore</em> writes back.</td><td>API</td></tr>
   <tr><td><code>process_instances</code></td><td>One row per run, saved after every step so a restart can resume mid-run.</td><td>Whoever executes — an engine host</td></tr>
   <tr><td><code>job_queue</code></td><td>Work to claim: a run, a resume, or a preview. The payload carries a snapshot of the definition taken at enqueue time.</td><td>Both — the API on request, an engine when its cron fires</td></tr>
   <tr><td><code>run_signals</code></td><td>Pause and cancel, crossing the process boundary. The worker polls between steps and clears the row when the run settles.</td><td>API writes, engine clears</td></tr>
@@ -463,6 +464,16 @@ only state the halves share beyond the work itself.</p>
   <tr><td><code>settings</code></td><td>Deployment configuration an admin may edit — so far, the mail relay. Anything security-shaped stays env-only.</td><td>API</td></tr>
   <tr><td><code>users</code></td><td>Accounts and roles (<code>admin</code>, <code>editor</code>). Disabling one revokes its sessions on the next request.</td><td>API</td></tr>
 </table>
+
+<p><b>Two of those tables are histories, and they answer different questions.</b>
+<code>process_versions</code> answers <em>what did that run execute?</em> — so it is immutable and
+only publishing adds to it. <code>process_audits</code> answers <em>who changed this, when, and
+can I have the old one back?</em> — so it takes a row for every change, including the ones that
+never got published. Restoring reads a snapshot out of an audit row and saves it as a
+<em>new</em> draft, leaving a <code>restored</code> row behind: the trail only ever grows, a
+published version is never rewritten, and the way back from a bad save does not depend on anyone
+having remembered to publish first. The audit rows belong to the process and are deleted with
+it.</p>
 
 <div class="callout bad">
   <p><code>PROCESS_ENGINE_SECRET_KEY</code> must be byte-identical on both hosts. The API encrypts
@@ -806,6 +817,33 @@ written literally in a component. <code>position</code> is designer-owned: a def
 the API or a test has every step at (0,0), and <code>layoutGraph</code> lays those out in
 dependency order on load without writing back.</p>
 
+<p><b>Two things on the canvas are drawn from facts rather than stored.</b> The arrow out of the
+trigger box is one: a step with nothing upstream <em>is</em> the step the engine hands the trigger
+payload to, so that arrow is derived from the graph (<code>rootIds</code>) and survives a save and
+reload even though a definition holds no connection to a trigger. And <b>an arrow leaves whichever
+side of a card faces its target</b> — <code>FloatingEdge.jsx</code> chooses the two borders per
+edge, judged against the cards' own sizes, so the horizontal / vertical preference decides only
+where the layout <em>puts</em> things. One canvas can read left-to-right and top-to-bottom at once,
+and a step dragged somewhere by hand never keeps an arrow doubling back to the wrong face of it.
+A source with several ports spreads its arrows along that border in port order, which is what
+keeps a Condition's two branches tellable apart. What an arrow carries is not geometry, though:
+<code>sourceHandle</code> becomes <code>Connection.source_port</code>, and
+<code>validate()</code> rejects a port the source's manifest never declared — so the editor takes
+the step's <code>main</code> where it has one and its first output otherwise, because assuming
+<code>main</code> for a Condition would author a definition that saves and then cannot be
+published.</p>
+
+<div class="callout">
+  <p><strong>The way back from a bad save, and a demo nobody can delete by accident.</strong> Undo
+  in the editor covers canvas structure for as long as the tab is open; the History button is the
+  way back after that, listing the <code>process_audits</code> trail and restoring any draft in it.
+  Separately, a process in the <code>demo</code> folder cannot be deleted: the API answers
+  <strong>409</strong> and reports <code>protected</code> on the row so the dashboard can disable
+  its own menu item. Moving it out of the folder is deliberately allowed — that is the way out,
+  and it leaves a <code>moved</code> audit row naming who did it. The folder list lives in the API
+  (<code>PROTECTED_FOLDERS</code>), never in the frontend.</p>
+</div>
+
 <div class="callout">
   <p><strong>Who can see a process.</strong> An admin sees all; anyone else sees what they created
   plus what is in <code>shared_with</code>, and sharing is flat — a recipient holds it exactly as
@@ -843,7 +881,7 @@ dependency order on load without writing back.</p>
   <tr>
     <td>Add a table or column</td>
     <td><code>process_engine_core/storage.py</code></td>
-    <td>Published versions are immutable — running instances record the version they used.</td>
+    <td>Published versions are immutable — running instances record the version they used. A change to a process leaves a <code>process_audits</code> row, so write the audit where the change happens.</td>
   </tr>
   <tr>
     <td>Change what crosses between hosts</td>
