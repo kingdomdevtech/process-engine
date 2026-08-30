@@ -429,7 +429,7 @@ export async function expandJson(scope, passes = 4) {
  * tolerated, only accounted for. Leave it out and none is allowed, which is what
  * a spec without a branch should say.
  */
-export async function expectRunPassed(page, steps, { skipped = 0 } = {}) {
+export async function expectRunPassed(page, steps, { skipped = 0, timeout = RUN_TIMEOUT } = {}) {
   const detail = runDetail(page)
   const ran = steps - skipped
   await expect(detail).toBeVisible({ timeout: 30_000 })
@@ -438,7 +438,7 @@ export async function expectRunPassed(page, steps, { skipped = 0 } = {}) {
     skipped
       ? `${ran} of ${steps} steps should have succeeded, with ${skipped} skipped by a branch`
       : `all ${steps} steps should have succeeded`,
-  ).toBeVisible({ timeout: RUN_TIMEOUT })
+  ).toBeVisible({ timeout })
 
   for (const status of ['failed', 'pending', 'running', 'cancelled']) {
     await expect(detail.locator(`.badge-${status}`), `the run reports a ${status} step`).toHaveCount(0)

@@ -59,8 +59,8 @@ class ExcelRefreshPlugin(ExcelRefreshSpec, Plugin):
                     refreshed.append(str(connection.Name))
                 logger.info("RefreshAll on %s (%d connections)", path.name, len(refreshed))
                 workbook.RefreshAll()
+                excel.CalculateUntilAsyncQueriesDone()
 
-            excel.CalculateUntilAsyncQueriesDone()
             if cfg.save:
                 workbook.Save()
             return {"workbook": str(path), "refreshed": refreshed, "saved": cfg.save}
