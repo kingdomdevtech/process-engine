@@ -42,12 +42,14 @@ test.use({ viewport: { width: 1680, height: 1000 } })
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const DEMO = 'Demo Excel Power Query refresh'
+const RETIRED = ['Demo - Order review + Excel refresh', 'Demo - Triage one order']
 const WORKBOOK = resolve(REPO, 'workdir', 'demo-orders.xlsx')
 
 test.describe.serial('the Excel Power Query refresh demo', () => {
   test('builds and publishes a connected Process through the designer', async ({ page }) => {
     await signIn(page)
     await removeDemoProcess(page, DEMO)
+    for (const name of RETIRED) await removeDemoProcess(page, name)
 
     await page.goto('/app/processes/new')
     await page.getByLabel('Folder').fill(DEMO_FOLDER)

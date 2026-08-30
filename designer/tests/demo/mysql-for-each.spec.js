@@ -114,22 +114,22 @@ const CREATE_TABLE = [
   'CREATE TABLE IF NOT EXISTS demo_orders (',
   '  id INT PRIMARY KEY,',
   '  customer VARCHAR(60) NOT NULL,',
-  '  amount DECIMAL(10,2) NOT NULL,',
+  '  total DECIMAL(10,2) NOT NULL,',
   "  status VARCHAR(20) NOT NULL DEFAULT 'new'",
   ')',
 ].join('\n')
 const SEED_ORDERS =
-  'REPLACE INTO demo_orders (id, customer, amount, status) VALUES\n' +
+  'REPLACE INTO demo_orders (id, customer, total, status) VALUES\n' +
   "  (1, 'Acme Corp', 900.00, 'new'),\n" +
   "  (2, 'Globex', 120.00, 'new')"
-const READ_ORDERS = 'SELECT id, customer, amount, status FROM demo_orders ORDER BY id'
+const READ_ORDERS = 'SELECT id, customer, total, status FROM demo_orders WHERE id IN (1, 2) ORDER BY id'
 const APPROVE = "UPDATE demo_orders SET status = 'approved' WHERE id = :id"
 const REJECT = "UPDATE demo_orders SET status = 'on hold' WHERE id = :id"
 
 /* The order the branch is decided by, and the order both branches write — the
    same row of the collection For Each is working through, so the demo cannot be
    read as deciding one thing and updating another. */
-const FIRST_AMOUNT = '{{ steps.for_each_order.output.items.0.amount }}'
+const FIRST_TOTAL = '{{ steps.for_each_order.output.items.0.total }}'
 const FIRST_ID = '{{ steps.for_each_order.output.items.0.id }}'
 
 /** Fill in a MySQL step's connection, and one bound value if it takes one. */
@@ -276,7 +276,7 @@ test.describe.serial('the MySQL order-review demo', () => {
 
     const amount = inspector.getByRole('textbox', { name: 'Value to check' })
     const threshold = inspector.getByRole('textbox', { name: 'Compared with' })
-    await amount.fill(FIRST_AMOUNT)
+    await amount.fill(FIRST_TOTAL)
     await amount.blur() // an untyped field commits on blur, so a number stays one
     await inspector.getByRole('combobox', { name: 'Test' }).selectOption('greater_than')
     await threshold.fill('500')

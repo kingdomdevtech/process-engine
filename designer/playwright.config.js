@@ -11,6 +11,8 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
+  // Demo Processes share the dashboard folder, MySQL fixture table, and queue.
+  workers: 1,
   fullyParallel: false,
   use: {
     baseURL: 'http://127.0.0.1:5173',
