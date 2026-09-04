@@ -105,7 +105,7 @@ jobs:
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DB_URL', '${{ secrets.PROCESS_ENGINE_DB_URL_LOCAL }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_SECRET_KEY', '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DESIGNER_URL', '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}', 'Machine')
-          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_WORK_DIR', '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\ProcessEngine\workdir" }}', 'Machine')
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_WORK_DIR', '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\\ProcessEngine\\workdir" }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_STEP_WORKERS', '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_QUEUE_POLL_SECONDS', '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_LOG_LEVEL', '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}', 'Machine')
@@ -119,11 +119,12 @@ jobs:
           $env:PROCESS_ENGINE_DB_URL = '${{ secrets.PROCESS_ENGINE_DB_URL }}'
           $env:PROCESS_ENGINE_SECRET_KEY = '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}'
           $env:PROCESS_ENGINE_DESIGNER_URL = '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}'
-          $env:PROCESS_ENGINE_WORK_DIR = '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\ProcessEngine\workdir" }}'
+          $env:PROCESS_ENGINE_WORK_DIR = '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\\ProcessEngine\\workdir" }}'
           $env:PROCESS_ENGINE_STEP_WORKERS = '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}'
           $env:PROCESS_ENGINE_QUEUE_POLL_SECONDS = '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}'
           $env:PROCESS_ENGINE_LOG_LEVEL = '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}'
-          & (Join-Path '${{ vars.PROCESS_ENGINE_VENV_PATH || "C:\apps\releases\process-engine\" + $tag + "\venv" }}' 'Scripts\python.exe') -m process_engine
+          $venvPath = if ('${{ vars.PROCESS_ENGINE_VENV_PATH }}') { '${{ vars.PROCESS_ENGINE_VENV_PATH }}' } else { (Join-Path $root 'venv') }
+          & (Join-Path $venvPath 'Scripts\python.exe') -m process_engine
           '@ | Set-Content -Path $launcher -Encoding UTF8
 
           # Configure and start Windows Service
