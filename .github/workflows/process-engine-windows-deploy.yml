@@ -141,7 +141,10 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           mkdir -p dist
           python -m pip wheel --wheel-dir dist --no-deps './packages/process_engine_core[mysql]'
-          python -m pip wheel --wheel-dir dist --no-deps --find-links dist './packages/process_engine[excel,mysql]'
+          python -m pip wheel --wheel-dir dist --no-deps './packages/process_engine[excel,mysql]'
+          python -m pip download --dest dist --find-links dist --only-binary=:all: \
+            --platform win_amd64 --python-version 311 --implementation cp \
+            'process-engine-core[mysql]==0.1.0' 'process-engine[mysql]==0.1.0' 'pywin32>=306'
 
       - name: Generate Windows service installer bundle
         run: |
@@ -160,6 +163,7 @@ jobs:
           $root = "C:\apps\releases\process-engine\$tag"
           $wheelDir = Join-Path $root "wheels"
           $venvDir = Join-Path $root "venv"
+          $pythonInstaller = Join-Path $root "python-3.11.9-amd64.exe"
 
           # Create destination directories
           Write-Host "Creating directories..."
@@ -171,10 +175,35 @@ jobs:
           Expand-Archive -Path "C:\Temp\process-engine-$tag.zip" -DestinationPath $root -Force
           Copy-Item -Path (Join-Path $root "dist\*") -Destination $wheelDir -Force
 
-          # Create or update virtual environment
+          # Find Python 3.11 or install the bundled official installer.
+          $python311 = $null
+          if (Get-Command py -ErrorAction SilentlyContinue) {
+            $candidate = & py -3.11 -c "import sys; print(sys.executable)" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $candidate) {
+              $python311 = $candidate
+            }
+          }
+
+          if (-not $python311) {
+            if (-not (Test-Path $pythonInstaller)) {
+              throw "Missing bundled Python installer: $pythonInstaller"
+            }
+            Write-Host "Installing Python 3.11..."
+            Start-Process -FilePath $pythonInstaller -ArgumentList @(
+              '/quiet', 'InstallAllUsers=1', 'Include_launcher=1', 'Include_pip=1',
+              'TargetDir=C:\Program Files\Python311'
+            ) -Wait -NoNewWindow
+            $python311 = 'C:\Program Files\Python311\python.exe'
+          }
+
+          if (-not (Test-Path $python311)) {
+            throw "Python 3.11 was not found after installation: $python311"
+          }
+
+          # Create or update virtual environment.
           Write-Host "Setting up Python virtual environment..."
           if (-not (Test-Path $venvDir)) {
-            py -3.11 -m venv $venvDir
+            & $python311 -m venv $venvDir
           }
 
           # Install dependencies
@@ -243,8 +272,10 @@ jobs:
           Write-Host "✅ Installation completed successfully"
           EOF
 
-          # Create deployment package
-          zip -r "process-engine-${{ steps.vars.outputs.tag }}.zip" dist install-process-engine.ps1
+          # Keep the target host offline after it has downloaded this S3 bundle.
+          curl --fail --location --output python-3.11.9-amd64.exe \
+            https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+          zip -r "process-engine-${{ steps.vars.outputs.tag }}.zip" dist install-process-engine.ps1 python-3.11.9-amd64.exe
 
       - name: Upload deployment package to S3
         run: |
