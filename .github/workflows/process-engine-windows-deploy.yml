@@ -29,55 +29,55 @@ jobs:
       - name: Validate required secrets and variables
         run: |
           echo "Validating required GitHub environment configuration..."
-          
+
           # Check required secrets
           MISSING_SECRETS=()
-          
-          if [ -z "${{ secrets.AWS_ROLE_DEPLOY }}" ]; then
+
+          if [ -z "${{ vars.AWS_ROLE_DEPLOY }}" ]; then
             MISSING_SECRETS+=("AWS_ROLE_DEPLOY")
           else
             echo "✓ AWS_ROLE_DEPLOY is set"
           fi
-          
+
           if [ -z "${{ secrets.PROCESS_ENGINE_DB_URL_LOCAL }}" ]; then
             MISSING_SECRETS+=("PROCESS_ENGINE_DB_URL_LOCAL")
           else
             echo "✓ PROCESS_ENGINE_DB_URL_LOCAL is set"
           fi
-          
+
           if [ -z "${{ secrets.PROCESS_ENGINE_SECRET_KEY }}" ]; then
             MISSING_SECRETS+=("PROCESS_ENGINE_SECRET_KEY")
           else
             echo "✓ PROCESS_ENGINE_SECRET_KEY is set"
           fi
-          
+
           # Check required variables
           MISSING_VARS=()
-          
+
           if [ -z "${{ vars.AWS_REGION }}" ]; then
             MISSING_VARS+=("AWS_REGION")
           else
             echo "✓ AWS_REGION is set: ${{ vars.AWS_REGION }}"
           fi
-          
+
           if [ -z "${{ vars.S3_BUCKET_DEPLOYMENTS }}" ]; then
             MISSING_VARS+=("S3_BUCKET_DEPLOYMENTS")
           else
             echo "✓ S3_BUCKET_DEPLOYMENTS is set: ${{ vars.S3_BUCKET_DEPLOYMENTS }}"
           fi
-          
+
           if [ -z "${{ vars.EC2_SERVICE_INSTANCE_ID }}" ]; then
             MISSING_VARS+=("EC2_SERVICE_INSTANCE_ID")
           else
             echo "✓ EC2_SERVICE_INSTANCE_ID is set: ${{ vars.EC2_SERVICE_INSTANCE_ID }}"
           fi
-          
+
           if [ -z "${{ vars.PROCESS_ENGINE_DESIGNER_URL }}" ]; then
             MISSING_VARS+=("PROCESS_ENGINE_DESIGNER_URL")
           else
             echo "✓ PROCESS_ENGINE_DESIGNER_URL is set: ${{ vars.PROCESS_ENGINE_DESIGNER_URL }}"
           fi
-          
+
           # Report missing configuration
           if [ ${#MISSING_SECRETS[@]} -gt 0 ] || [ ${#MISSING_VARS[@]} -gt 0 ]; then
             echo ""
@@ -105,7 +105,7 @@ jobs:
             
             exit 1
           fi
-          
+
           echo ""
           echo "✅ All required configuration is present"
 
@@ -115,7 +115,7 @@ jobs:
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_DEPLOY }}
+          role-to-assume: ${{ vars.AWS_ROLE_DEPLOY }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Set image tag based on branch
