@@ -238,7 +238,7 @@ jobs:
           $env:PROCESS_ENGINE_STEP_WORKERS = if ('${{ vars.PROCESS_ENGINE_STEP_WORKERS }}') { '${{ vars.PROCESS_ENGINE_STEP_WORKERS }}' } else { '8' }
           $env:PROCESS_ENGINE_QUEUE_POLL_SECONDS = if ('${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}') { '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}' } else { '2.0' }
           $env:PROCESS_ENGINE_LOG_LEVEL = if ('${{ vars.PROCESS_ENGINE_LOG_LEVEL }}') { '${{ vars.PROCESS_ENGINE_LOG_LEVEL }}' } else { 'INFO' }
-          $venvPath = if ('${{ vars.PROCESS_ENGINE_VENV_PATH }}') { '${{ vars.PROCESS_ENGINE_VENV_PATH }}' } else { (Join-Path $root 'venv') }
+          $venvPath = if ('${{ vars.PROCESS_ENGINE_VENV_PATH }}') { '${{ vars.PROCESS_ENGINE_VENV_PATH }}' } else { (Join-Path $PSScriptRoot 'venv') }
           & (Join-Path $venvPath 'Scripts\python.exe') -m process_engine
           '@ | Set-Content -Path $launcher -Encoding UTF8
 
