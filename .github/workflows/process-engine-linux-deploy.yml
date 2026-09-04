@@ -1,0 +1,133 @@
+name: Process Engine Linux Container
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - main
+            - staging
+        paths:
+            - "designer/**"
+            - "packages/process_engine_core/**"
+            - "packages/process_engine_api/**"
+            - "deploy/**"
+            - "docs/**"
+            - "Dockerfile"
+            - ".github/workflows/process-engine-linux-deploy.yml"
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    build-push-deploy:
+        runs-on: ubuntu-latest
+        environment: ${{
+            github.ref_name == 'main' && 'process-engine-production'
+            || github.ref_name == 'staging' && 'process-engine-staging'
+            }}
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set image tag based on branch
+              id: vars
+              run: |
+                  BRANCH="${GITHUB_REF##*/}"
+                  if [ "$BRANCH" = "main" ]; then
+                    TAG="prod"
+                  elif [ "$BRANCH" = "staging" ]; then
+                    TAG="staging"
+                  else
+                    TAG="${BRANCH//\//-}"  # sanitize slashes
+                  fi
+                  echo "tag=$TAG" >> $GITHUB_OUTPUT
+                  echo "git_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+            - name: Configure AWS credentials using OIDC
+              uses: aws-actions/configure-aws-credentials@v3
+              with:
+                  role-to-assume: ${{ secrets.AWS_ROLE_DEPLOY }}
+                  aws-region: ${{ vars.AWS_REGION }}
+
+            - name: Log in to Amazon ECR
+              id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v2
+
+            - name: Build, tag, and push image
+              env:
+                  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+                  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY_DESIGNER }}
+                  IMAGE_TAG: ${{ steps.vars.outputs.tag }}-${{ steps.vars.outputs.git_sha }}
+              run: |
+                  docker build -f Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+                  docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.tag }}
+                  docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+                  docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.vars.outputs.tag }}
+
+            - name: Deploy container via SSM
+              run: |
+                  EC2_INSTANCE_ID=${{ vars.EC2_WEB_INSTANCE_ID }}
+                  AWS_REGION=${{ vars.AWS_REGION }}
+                  ECR_REGISTRY=${{ vars.ECR_REGISTRY }}
+                  ECR_URI=${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY_DESIGNER }}:${{ steps.vars.outputs.tag }}-${{ steps.vars.outputs.git_sha }}
+                  CONTAINER_NAME="process-engine"
+                  PORT="8080"
+
+                  # IMPORTANT: This Linux container uses REMOTE MySQL on the Windows host
+                  # The PROCESS_ENGINE_DB_URL secret should be set to:
+                  #   mysql+pymysql://process_engine:password@WINDOWS_HOST_IP:3306/process_engine
+                  # 
+                  # This connects to the same database as the Windows engine service,
+                  # allowing them to share the job queue and instance state.
+
+                  COMMAND_ID=$(aws ssm send-command \
+                    --document-name "AWS-RunShellScript" \
+                    --instance-ids "$EC2_INSTANCE_ID" \
+                    --region "$AWS_REGION" \
+                    --comment "Pull and run Process Engine container" \
+                    --parameters commands="[
+                      \"mkdir -p /etc/process-engine\",
+                      \"echo 'PROCESS_ENGINE_DB_URL=${{ secrets.PROCESS_ENGINE_DB_URL_REMOTE }}' > /etc/process-engine/linux-api.env\",
+                      \"aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}\",
+                      \"docker rm -f '${CONTAINER_NAME}' || true\",
+                      \"docker image prune -a -f\",
+                      \"docker pull '${ECR_URI}'\",
+                      \"docker run -d --name '${CONTAINER_NAME}' -p '${PORT}':8080 --restart always -v process-engine-data:/data --env-file /etc/process-engine/linux-api.env '${ECR_URI}'\"
+                    ]" \
+                    --query "Command.CommandId" --output text)
+
+                    echo "command_id=$COMMAND_ID" >> $GITHUB_OUTPUT
+
+                    echo "Waiting for command to complete..."
+                    for i in {1..30}; do
+                      STATUS=$(aws ssm get-command-invocation \
+                        --command-id "$COMMAND_ID" \
+                        --instance-id "$EC2_INSTANCE_ID" \
+                        --region "$AWS_REGION" \
+                        --query "Status" --output text)
+
+                      echo "Attempt $i: $STATUS"
+
+                      if [[ "$STATUS" == "Success" ]]; then
+                        echo "✅ SSM command succeeded."
+                        exit 0
+                      elif [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
+                        echo "❌ SSM command failed with status: $STATUS"
+                        ERROR_OUTPUT=$(aws ssm get-command-invocation \
+                          --command-id "$COMMAND_ID" \
+                          --instance-id "$EC2_INSTANCE_ID" \
+                          --region "$AWS_REGION" \
+                          --query "StandardErrorContent" \
+                          --output text)
+                        
+                        echo "🛑 Error output:"
+                        echo "$ERROR_OUTPUT"
+                        exit 1
+                      fi
+                      sleep 10
+                    done
+
+                    echo "❌ SSM command did not complete in time."
+                    exit 1
