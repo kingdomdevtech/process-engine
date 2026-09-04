@@ -105,10 +105,14 @@ jobs:
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DB_URL', '${{ secrets.PROCESS_ENGINE_DB_URL_LOCAL }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_SECRET_KEY', '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}', 'Machine')
           [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_DESIGNER_URL', '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}', 'Machine')
-          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_WORK_DIR', '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\\ProcessEngine\\workdir" }}', 'Machine')
-          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_STEP_WORKERS', '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}', 'Machine')
-          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_QUEUE_POLL_SECONDS', '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}', 'Machine')
-          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_LOG_LEVEL', '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}', 'Machine')
+          $workDir = if ('${{ vars.PROCESS_ENGINE_WORK_DIR }}') { '${{ vars.PROCESS_ENGINE_WORK_DIR }}' } else { 'C:\ProcessEngine\workdir' }
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_WORK_DIR', $workDir, 'Machine')
+          $stepWorkers = if ('${{ vars.PROCESS_ENGINE_STEP_WORKERS }}') { '${{ vars.PROCESS_ENGINE_STEP_WORKERS }}' } else { '8' }
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_STEP_WORKERS', $stepWorkers, 'Machine')
+          $queuePoll = if ('${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}') { '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}' } else { '2.0' }
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_QUEUE_POLL_SECONDS', $queuePoll, 'Machine')
+          $logLevel = if ('${{ vars.PROCESS_ENGINE_LOG_LEVEL }}') { '${{ vars.PROCESS_ENGINE_LOG_LEVEL }}' } else { 'INFO' }
+          [Environment]::SetEnvironmentVariable('PROCESS_ENGINE_LOG_LEVEL', $logLevel, 'Machine')
 
           # Create launcher script
           Write-Host "Creating launcher script..."
@@ -119,17 +123,17 @@ jobs:
           $env:PROCESS_ENGINE_DB_URL = '${{ secrets.PROCESS_ENGINE_DB_URL }}'
           $env:PROCESS_ENGINE_SECRET_KEY = '${{ secrets.PROCESS_ENGINE_SECRET_KEY }}'
           $env:PROCESS_ENGINE_DESIGNER_URL = '${{ vars.PROCESS_ENGINE_DESIGNER_URL }}'
-          $env:PROCESS_ENGINE_WORK_DIR = '${{ vars.PROCESS_ENGINE_WORK_DIR || "C:\\ProcessEngine\\workdir" }}'
-          $env:PROCESS_ENGINE_STEP_WORKERS = '${{ vars.PROCESS_ENGINE_STEP_WORKERS || "8" }}'
-          $env:PROCESS_ENGINE_QUEUE_POLL_SECONDS = '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS || "2.0" }}'
-          $env:PROCESS_ENGINE_LOG_LEVEL = '${{ vars.PROCESS_ENGINE_LOG_LEVEL || "INFO" }}'
+          $env:PROCESS_ENGINE_WORK_DIR = if ('${{ vars.PROCESS_ENGINE_WORK_DIR }}') { '${{ vars.PROCESS_ENGINE_WORK_DIR }}' } else { 'C:\ProcessEngine\workdir' }
+          $env:PROCESS_ENGINE_STEP_WORKERS = if ('${{ vars.PROCESS_ENGINE_STEP_WORKERS }}') { '${{ vars.PROCESS_ENGINE_STEP_WORKERS }}' } else { '8' }
+          $env:PROCESS_ENGINE_QUEUE_POLL_SECONDS = if ('${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}') { '${{ vars.PROCESS_ENGINE_QUEUE_POLL_SECONDS }}' } else { '2.0' }
+          $env:PROCESS_ENGINE_LOG_LEVEL = if ('${{ vars.PROCESS_ENGINE_LOG_LEVEL }}') { '${{ vars.PROCESS_ENGINE_LOG_LEVEL }}' } else { 'INFO' }
           $venvPath = if ('${{ vars.PROCESS_ENGINE_VENV_PATH }}') { '${{ vars.PROCESS_ENGINE_VENV_PATH }}' } else { (Join-Path $root 'venv') }
           & (Join-Path $venvPath 'Scripts\python.exe') -m process_engine
           '@ | Set-Content -Path $launcher -Encoding UTF8
 
           # Configure and start Windows Service
           Write-Host "Configuring Windows service..."
-          $serviceName = '${{ vars.PROCESS_ENGINE_SERVICE_NAME || "ProcessEngineWorker" }}'
+          $serviceName = if ('${{ vars.PROCESS_ENGINE_SERVICE_NAME }}') { '${{ vars.PROCESS_ENGINE_SERVICE_NAME }}' } else { 'ProcessEngineWorker' }
 
           if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
             Write-Host "Stopping existing service..."
