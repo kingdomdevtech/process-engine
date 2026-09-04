@@ -15,3 +15,6 @@ designer/dist/
 !workdir/demo-orders.xlsx
 test-results/
 .cache/
+*/build/
+**/dist/
+packages/*/build/
