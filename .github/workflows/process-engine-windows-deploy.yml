@@ -164,6 +164,7 @@ jobs:
           $wheelDir = Join-Path $root "wheels"
           $venvDir = Join-Path $root "venv"
           $pythonInstaller = Join-Path $root "python-3.11.9-amd64.exe"
+          $nssm = Join-Path $root "nssm.exe"
 
           # Create destination directories
           Write-Host "Creating directories..."
@@ -242,9 +243,14 @@ jobs:
           & (Join-Path $venvPath 'Scripts\python.exe') -m process_engine
           '@ | Set-Content -Path $launcher -Encoding UTF8
 
-          # Configure and start Windows Service
+          # NSSM runs the PowerShell worker as a Windows service.  A PowerShell
+          # process registered directly with sc.exe does not speak the Service
+          # Control Manager protocol and exits with a generic start failure.
           Write-Host "Configuring Windows service..."
           $serviceName = if ('${{ vars.PROCESS_ENGINE_SERVICE_NAME }}') { '${{ vars.PROCESS_ENGINE_SERVICE_NAME }}' } else { 'ProcessEngineWorker' }
+          if (-not (Test-Path $nssm)) {
+            throw "Missing bundled NSSM executable: $nssm"
+          }
 
           if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
             Write-Host "Stopping existing service..."
@@ -253,13 +259,27 @@ jobs:
             sc.exe delete $serviceName | Out-Null
           }
 
-          $binPath = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
-          sc.exe create $serviceName binPath= $binPath start= auto obj= LocalSystem
-          sc.exe failure $serviceName reset= 86400 actions= restart/5000
-          sc.exe description $serviceName "Process Engine worker service"
+          $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
+          & $nssm install $serviceName $powerShell $arguments
+          & $nssm set $serviceName AppDirectory $root
+          & $nssm set $serviceName Start SERVICE_AUTO_START
+          & $nssm set $serviceName AppStdout (Join-Path $root 'worker.stdout.log')
+          & $nssm set $serviceName AppStderr (Join-Path $root 'worker.stderr.log')
+          & $nssm set $serviceName AppRotateFiles 1
+          & $nssm set $serviceName AppExit Default Restart
+          & $nssm set $serviceName Description "Process Engine worker service"
 
           Write-Host "Starting service..."
-          Start-Service -Name $serviceName
+          try {
+            Start-Service -Name $serviceName
+          } catch {
+            $stderr = Join-Path $root 'worker.stderr.log'
+            if (Test-Path $stderr) {
+              Get-Content $stderr -Raw | Write-Host
+            }
+            throw
+          }
 
           # Verify service status
           $service = Get-Service -Name $serviceName
@@ -275,7 +295,10 @@ jobs:
           # Keep the target host offline after it has downloaded this S3 bundle.
           curl --fail --location --output python-3.11.9-amd64.exe \
             https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
-          zip -r "process-engine-${{ steps.vars.outputs.tag }}.zip" dist install-process-engine.ps1 python-3.11.9-amd64.exe
+          curl --fail --location --output nssm.zip \
+            https://nssm.cc/release/nssm-2.24.zip
+          unzip -p nssm.zip nssm-2.24/win64/nssm.exe > nssm.exe
+          zip -r "process-engine-${{ steps.vars.outputs.tag }}.zip" dist install-process-engine.ps1 python-3.11.9-amd64.exe nssm.exe
 
       - name: Upload deployment package to S3
         run: |
