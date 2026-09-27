@@ -166,6 +166,16 @@ jobs:
           $venvDir = Join-Path $root "venv"
           $pythonInstaller = Join-Path $root "python-3.11.9-amd64.exe"
           $nssm = Join-Path $root "nssm.exe"
+          $serviceName = if ('${{ vars.PROCESS_ENGINE_SERVICE_NAME }}') { '${{ vars.PROCESS_ENGINE_SERVICE_NAME }}' } else { 'ProcessEngineWorker' }
+
+          # Stop the worker before replacing files in its release directory.
+          if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+            Write-Host "Stopping existing service..."
+            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+            $service = Get-Service -Name $serviceName
+            $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+            sc.exe delete $serviceName | Out-Null
+          }
 
           # Create destination directories
           Write-Host "Creating directories..."
@@ -249,16 +259,8 @@ jobs:
           # process registered directly with sc.exe does not speak the Service
           # Control Manager protocol and exits with a generic start failure.
           Write-Host "Configuring Windows service..."
-          $serviceName = if ('${{ vars.PROCESS_ENGINE_SERVICE_NAME }}') { '${{ vars.PROCESS_ENGINE_SERVICE_NAME }}' } else { 'ProcessEngineWorker' }
           if (-not (Test-Path $nssm)) {
             throw "Missing bundled NSSM executable: $nssm"
-          }
-
-          if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-            Write-Host "Stopping existing service..."
-            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
-            sc.exe delete $serviceName | Out-Null
           }
 
           $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -276,7 +278,7 @@ jobs:
           try {
             Start-Service -Name $serviceName
           } catch {
-            $stderr = Join-Path $root 'worker.stderr.log'
+            $stderr = Join-Path $logDir 'worker.stderr.log'
             if (Test-Path $stderr) {
               Get-Content $stderr -Raw | Write-Host
             }
@@ -312,7 +314,7 @@ jobs:
           cat > deploy-from-s3.ps1 <<'EOF'
           $ErrorActionPreference = 'Stop'
           $tag = "${{ steps.vars.outputs.tag }}"
-          $dest = "C:\apps\releases\process-engine\$tag"
+          $dest = Join-Path $env:TEMP ("process-engine-$tag-" + [guid]::NewGuid().ToString())
           $zipPath = "C:\Temp\process-engine-$tag.zip"
           $s3Key = "process-engine/process-engine-$tag.zip"
 
