@@ -191,9 +191,13 @@ jobs:
           # Find Python 3.11 or install the bundled official installer.
           $python311 = $null
           if (Get-Command py -ErrorAction SilentlyContinue) {
-            $candidate = & py -3.11 -c "import sys; print(sys.executable)" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $candidate) {
-              $python311 = $candidate
+            try {
+              $candidate = & py -3.11 -c "import sys; print(sys.executable)" 2>$null
+              if ($LASTEXITCODE -eq 0 -and $candidate -and (Test-Path $candidate)) {
+                $python311 = $candidate
+              }
+            } catch {
+              Write-Host "Python launcher has no usable Python 3.11; using the bundled installer."
             }
           }
 
