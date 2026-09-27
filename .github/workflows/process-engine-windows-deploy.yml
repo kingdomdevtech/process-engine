@@ -206,10 +206,13 @@ jobs:
               throw "Missing bundled Python installer: $pythonInstaller"
             }
             Write-Host "Installing Python 3.11..."
-            Start-Process -FilePath $pythonInstaller -ArgumentList @(
-              '/quiet', 'InstallAllUsers=1', 'Include_launcher=1', 'Include_pip=1',
-              'TargetDir=C:\Program Files\Python311'
-            ) -Wait -NoNewWindow
+            $pythonInstallLog = Join-Path $logDir 'python-install.log'
+            $installArgs = '/quiet InstallAllUsers=1 Include_launcher=1 Include_pip=1 ' +
+              'TargetDir="C:\Program Files\Python311" /log "' + $pythonInstallLog + '"'
+            $install = Start-Process -FilePath $pythonInstaller -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
+            if ($install.ExitCode -ne 0) {
+              throw "Python 3.11 installer failed with exit code $($install.ExitCode). See $pythonInstallLog"
+            }
             $python311 = 'C:\Program Files\Python311\python.exe'
           }
 
