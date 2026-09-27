@@ -370,8 +370,18 @@ jobs:
           PROCESS_ENGINE_SERVICE_PASSWORD: ${{ secrets.PROCESS_ENGINE_SERVICE_PASSWORD }}
         run: |
           set -euo pipefail
+          SERVICE_ACCOUNT_NAME="$PROCESS_ENGINE_SERVICE_ACCOUNT"
+          if [[ "$SERVICE_ACCOUNT_NAME" == .\\* ]]; then
+            SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:2}"
+          fi
+          if [[ -z "$SERVICE_ACCOUNT_NAME" || "$SERVICE_ACCOUNT_NAME" == *\\* || "$SERVICE_ACCOUNT_NAME" == */* ]]; then
+            echo "PROCESS_ENGINE_SERVICE_ACCOUNT must contain a local username, optionally prefixed with .\\."
+            exit 1
+          fi
+          SERVICE_ACCOUNT=".\\${SERVICE_ACCOUNT_NAME}"
+
           SERVICE_CREDENTIALS_B64=$(jq -cn \
-            --arg account "$PROCESS_ENGINE_SERVICE_ACCOUNT" \
+            --arg account "$SERVICE_ACCOUNT" \
             --arg password "$PROCESS_ENGINE_SERVICE_PASSWORD" \
             '{account: $account, password: $password}' | base64 | tr -d '\n')
 
@@ -402,9 +412,7 @@ jobs:
           $serviceCredentials.password = $null
           EOF
 
-          script_contents=$(<deploy-from-s3.ps1)
-          script_contents=${script_contents//__SERVICE_CREDENTIALS_B64__/$SERVICE_CREDENTIALS_B64}
-          printf '%s\n' "$script_contents" > deploy-from-s3.ps1
+          sed -i "s|__SERVICE_CREDENTIALS_B64__|$SERVICE_CREDENTIALS_B64|g" deploy-from-s3.ps1
 
           json_lines=$(jq -R . < deploy-from-s3.ps1 | jq -s .)
 
