@@ -226,7 +226,8 @@ jobs:
             )
             $install = Start-Process -FilePath $pythonInstaller -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
             if ($install.ExitCode -ne 0) {
-              throw "Python 3.11 installer failed with exit code $($install.ExitCode). See $pythonInstallLog"
+              $installLog = if (Test-Path $pythonInstallLog) { Get-Content -Path $pythonInstallLog -Raw } else { 'Installer log was not created.' }
+              throw "Python 3.11 installer failed with exit code $($install.ExitCode). Installer log: $installLog"
             }
             $python311 = 'C:\Python311\python.exe'
           }
