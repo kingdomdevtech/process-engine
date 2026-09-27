@@ -160,7 +160,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $tag = "${{ steps.vars.outputs.tag }}"
-          $root = "C:\apps\releases\process-engine\$tag"
+          $root = "C:\apps\releases\process-engine\$tag\worker"
+          $logDir = Join-Path $root "logs"
           $wheelDir = Join-Path $root "wheels"
           $venvDir = Join-Path $root "venv"
           $pythonInstaller = Join-Path $root "python-3.11.9-amd64.exe"
@@ -169,6 +170,7 @@ jobs:
           # Create destination directories
           Write-Host "Creating directories..."
           New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path $logDir | Out-Null
           New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
 
           # Extract the deployment package
@@ -265,7 +267,7 @@ jobs:
           & $nssm set $serviceName AppDirectory $root
           & $nssm set $serviceName Start SERVICE_AUTO_START
           & $nssm set $serviceName AppStdout (Join-Path $root 'worker.stdout.log')
-          & $nssm set $serviceName AppStderr (Join-Path $root 'worker.stderr.log')
+          & $nssm set $serviceName AppStderr (Join-Path $logDir 'worker.stderr.log')
           & $nssm set $serviceName AppRotateFiles 1
           & $nssm set $serviceName AppExit Default Restart
           & $nssm set $serviceName Description "Process Engine worker service"
