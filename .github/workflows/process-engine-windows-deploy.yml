@@ -51,6 +51,18 @@ jobs:
             echo "✓ PROCESS_ENGINE_SECRET_KEY is set"
           fi
 
+          if [ -z "${{ secrets.PROCESS_ENGINE_SERVICE_PASSWORD }}" ]; then
+            MISSING_SECRETS+=("PROCESS_ENGINE_SERVICE_PASSWORD")
+          else
+            echo "✓ PROCESS_ENGINE_SERVICE_PASSWORD is set"
+          fi
+
+          if [ -z "${{ secrets.PROCESS_ENGINE_SERVICE_ACCOUNT }}" ]; then
+            MISSING_SECRETS+=("PROCESS_ENGINE_SERVICE_ACCOUNT")
+          else
+            echo "✓ PROCESS_ENGINE_SERVICE_ACCOUNT is set"
+          fi
+
           # Check required variables
           MISSING_VARS=()
 
@@ -157,6 +169,11 @@ jobs:
           # 
           # The Linux container will connect to this MySQL server via the Windows host IP
           cat > install-process-engine.ps1 <<'EOF'
+          param(
+            [Parameter(Mandatory = $true)][string]$ServiceAccount,
+            [Parameter(Mandatory = $true)][string]$ServicePassword
+          )
+
           $ErrorActionPreference = 'Stop'
 
           $tag = "${{ steps.vars.outputs.tag }}"
@@ -300,6 +317,10 @@ jobs:
           $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
           & $nssm install $serviceName $powerShell $arguments
+          & $nssm set $serviceName ObjectName $ServiceAccount $ServicePassword
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSSM failed to configure the Windows service logon account (exit code $LASTEXITCODE)."
+          }
           & $nssm set $serviceName AppDirectory $root
           & $nssm set $serviceName Start SERVICE_AUTO_START
           & $nssm set $serviceName AppStdout (Join-Path $root 'worker.stdout.log')
@@ -344,7 +365,16 @@ jobs:
             "s3://${{ vars.S3_BUCKET_DEPLOYMENTS }}/process-engine/process-engine-${{ steps.vars.outputs.tag }}.zip"
 
       - name: Deploy via SSM to Windows server
+        env:
+          PROCESS_ENGINE_SERVICE_ACCOUNT: ${{ secrets.PROCESS_ENGINE_SERVICE_ACCOUNT }}
+          PROCESS_ENGINE_SERVICE_PASSWORD: ${{ secrets.PROCESS_ENGINE_SERVICE_PASSWORD }}
         run: |
+          set -euo pipefail
+          SERVICE_CREDENTIALS_B64=$(jq -cn \
+            --arg account "$PROCESS_ENGINE_SERVICE_ACCOUNT" \
+            --arg password "$PROCESS_ENGINE_SERVICE_PASSWORD" \
+            '{account: $account, password: $password}' | base64 | tr -d '\n')
+
           cat > deploy-from-s3.ps1 <<'EOF'
           $ErrorActionPreference = 'Stop'
           $tag = "${{ steps.vars.outputs.tag }}"
@@ -367,8 +397,14 @@ jobs:
           }
 
           Write-Host "Executing installation script..."
-          & $psScript
+          $serviceCredentials = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__SERVICE_CREDENTIALS_B64__')) | ConvertFrom-Json
+          & $psScript -ServiceAccount $serviceCredentials.account -ServicePassword $serviceCredentials.password
+          $serviceCredentials.password = $null
           EOF
+
+          script_contents=$(<deploy-from-s3.ps1)
+          script_contents=${script_contents//__SERVICE_CREDENTIALS_B64__/$SERVICE_CREDENTIALS_B64}
+          printf '%s\n' "$script_contents" > deploy-from-s3.ps1
 
           json_lines=$(jq -R . < deploy-from-s3.ps1 | jq -s .)
 
